@@ -19,6 +19,16 @@ const PROFILES = {
   }
 };
 
+const COMPLETE_PROFILE = {
+  id: "complete",
+  name: "Liste complète",
+  emoji: "🛒",
+  color: "#9B59B6",
+  regime: "Rénald + Gwénaëlle + Enfants — fusionnée par magasin"
+};
+
+const ALL_PROFILES_ARR = [PROFILES.renald, PROFILES.gwenaelle, PROFILES.famille];
+
 const CAT_COLORS = {
   "Légumes":"#4CAF50","Protéines":"#FF5722","Féculents":"#FF9800",
   "Produits laitiers":"#2196F3","Fruits":"#E91E63","Épicerie":"#9C27B0",
@@ -27,6 +37,16 @@ const CAT_COLORS = {
 
 const REPAS_ICONS = { petit_dejeuner:"☀️", dejeuner:"🌤️", diner:"🌙" };
 const REPAS_LABELS = { petit_dejeuner:"Petit-déjeuner", dejeuner:"Déjeuner", diner:"Dîner" };
+
+const LS_PREFIX = "courses-app-v1";
+const loadLS = (key) => {
+  if (typeof window === "undefined") return null;
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : null; } catch { return null; }
+};
+const saveLS = (key, val) => {
+  if (typeof window === "undefined") return;
+  try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
+};
 
 async function callClaude(prompt) {
   const res = await fetch("/api/claude", {
@@ -53,33 +73,93 @@ export default function App() {
   const [filterCat, setFilterCat] = useState("Toutes");
   const [filterMag, setFilterMag] = useState("Tous");
 
+  const isComplete = profile?.id === "complete";
+
   const openProfile = (p) => {
-    setProfile(p); setScreen("detail"); setTab("menus");
-    setMenus(null); setCourses(null); setErrorMenus(null); setErrorCourses(null);
-    setFilterCat("Toutes"); setFilterMag("Tous");
-    genMenus(p); genCourses(p);
+    setProfile(p);
+    setScreen("detail");
+    setTab(p.id === "complete" ? "courses" : "menus");
+    setErrorMenus(null);
+    setErrorCourses(null);
+    setFilterCat("Toutes");
+    setFilterMag("Tous");
+
+    const cachedMenus = p.id !== "complete" ? loadLS(`${LS_PREFIX}-${p.id}-menus`) : null;
+    const cachedCourses = loadLS(`${LS_PREFIX}-${p.id}-courses`);
+
+    setMenus(cachedMenus);
+    setCourses(cachedCourses);
+
+    if (!cachedMenus && p.id !== "complete") genMenus(p);
+    if (!cachedCourses) genCourses(p);
   };
 
   const genMenus = async (p) => {
-    setLoadingMenus(true); setErrorMenus(null);
-    try { const d = await callClaude(p.menuPrompt); setMenus(d.jours || []); }
-    catch { setErrorMenus("Erreur menus. Réessaie."); }
-    finally { setLoadingMenus(false); }
+    setLoadingMenus(true);
+    setErrorMenus(null);
+    try {
+      const d = await callClaude(p.menuPrompt);
+      const data = d.jours || [];
+      setMenus(data);
+      saveLS(`${LS_PREFIX}-${p.id}-menus`, data);
+    } catch {
+      setErrorMenus("Erreur menus. Réessaie.");
+    } finally {
+      setLoadingMenus(false);
+    }
   };
 
   const genCourses = async (p) => {
-    setLoadingCourses(true); setErrorCourses(null);
-    try { const d = await callClaude(p.coursesPrompt); setCourses(d.liste || []); }
-    catch { setErrorCourses("Erreur courses. Réessaie."); }
-    finally { setLoadingCourses(false); }
+    setLoadingCourses(true);
+    setErrorCourses(null);
+    try {
+      let items;
+      if (p.id === "complete") {
+        const results = await Promise.all(
+          ALL_PROFILES_ARR.map(prof =>
+            callClaude(prof.coursesPrompt)
+              .then(d => (d.liste || []).map(item => ({ ...item, pour: prof.name, pourColor: prof.color })))
+              .catch(() => [])
+          )
+        );
+        items = results.flat();
+        if (items.length === 0) throw new Error("empty");
+      } else {
+        const d = await callClaude(p.coursesPrompt);
+        items = d.liste || [];
+      }
+      const itemsWithCheck = items.map(i => ({ ...i, checked: false }));
+      setCourses(itemsWithCheck);
+      saveLS(`${LS_PREFIX}-${p.id}-courses`, itemsWithCheck);
+    } catch {
+      setErrorCourses("Erreur courses. Réessaie.");
+    } finally {
+      setLoadingCourses(false);
+    }
+  };
+
+  const toggleItem = (idx) => {
+    if (!courses || !profile) return;
+    const updated = courses.map((item, i) => i === idx ? { ...item, checked: !item.checked } : item);
+    setCourses(updated);
+    saveLS(`${LS_PREFIX}-${profile.id}-courses`, updated);
   };
 
   const cats = courses ? ["Toutes", ...new Set(courses.map(i => i.categorie))] : [];
   const mags = courses ? ["Tous", ...new Set(courses.map(i => i.magasin))] : [];
-  const filteredCourses = (courses||[]).filter(i =>
+  const filteredCourses = (courses||[]).map((it, idx)=>({ ...it, _idx: idx })).filter(i =>
     (filterCat==="Toutes"||i.categorie===filterCat) && (filterMag==="Tous"||i.magasin===filterMag)
   );
   const byMag = (courses||[]).reduce((a,i)=>{ a[i.magasin]=(a[i.magasin]||0)+1; return a; },{});
+
+  const groupedByMag = isComplete && filteredCourses.length
+    ? filteredCourses.reduce((acc, item) => {
+        const m = item.magasin || "Autre";
+        if (!acc[m]) acc[m] = [];
+        acc[m].push(item);
+        return acc;
+      }, {})
+    : null;
 
   const pill = (active, color) => ({
     flexShrink:0, padding:"5px 12px", borderRadius:20, fontSize:12,
@@ -92,6 +172,51 @@ export default function App() {
     background:"transparent", color:active?color:"#666",
     fontWeight:active?"bold":"normal", cursor:"pointer", fontSize:13
   });
+
+  const renderItem = (item) => {
+    const checked = !!item.checked;
+    const accent = profile?.color || "#888";
+    return (
+      <div
+        key={item._idx}
+        onClick={()=>toggleItem(item._idx)}
+        style={{
+          display:"flex", alignItems:"center", gap:12, padding:"14px 16px", marginBottom:8,
+          background: checked ? "rgba(255,255,255,0.015)" : "rgba(255,255,255,0.04)",
+          border:`1px solid ${checked ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.07)"}`,
+          borderRadius:12, cursor:"pointer",
+          opacity: checked ? 0.45 : 1,
+          textDecoration: checked ? "line-through" : "none",
+          transition:"opacity 0.2s, background 0.2s"
+        }}
+      >
+        <div style={{
+          width:22, height:22, borderRadius:"50%", flexShrink:0,
+          border:`2px solid ${checked ? accent : "#444"}`,
+          background: checked ? accent : "transparent",
+          display:"flex", alignItems:"center", justifyContent:"center",
+          color:"#000", fontSize:13, fontWeight:"bold",
+          transition:"background 0.15s, border-color 0.15s"
+        }}>
+          {checked ? "✓" : ""}
+        </div>
+        <div style={{ width:8, height:8, borderRadius:"50%", flexShrink:0, background:CAT_COLORS[item.categorie]||"#888" }} />
+        <div style={{ flex:1, minWidth:0 }}>
+          <div style={{ fontWeight:"bold", fontSize:14 }}>{item.produit}</div>
+          <div style={{ fontSize:11, color:"#666", marginTop:2 }}>
+            {item.quantite} · {item.categorie}
+            {item.pour && (
+              <span style={{ color: item.pourColor || "#888", marginLeft:6 }}>· 👤 {item.pour}</span>
+            )}
+          </div>
+        </div>
+        <div style={{ textAlign:"right", flexShrink:0 }}>
+          <div style={{ fontSize:11, fontWeight:"bold", background:"rgba(255,255,255,0.1)", borderRadius:8, padding:"3px 8px", marginBottom:3 }}>{item.magasin}</div>
+          {item.prix && <div style={{ fontSize:11, color:accent }}>~{item.prix}</div>}
+        </div>
+      </div>
+    );
+  };
 
   return (
     <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#0f0f1a 0%,#1a1a2e 50%,#0f0f1a 100%)", fontFamily:"Georgia,serif", color:"#f0f0f0" }}>
@@ -117,6 +242,20 @@ export default function App() {
               <span style={{ marginLeft:"auto", color:p.color, fontSize:20 }}>→</span>
             </button>
           ))}
+
+          <div style={{ borderTop:"1px solid #222", margin:"24px 0 16px", textAlign:"center", position:"relative" }}>
+            <span style={{ position:"absolute", top:-9, left:"50%", transform:"translateX(-50%)", background:"#0f0f1a", padding:"0 10px", fontSize:11, color:"#555", letterSpacing:1, textTransform:"uppercase" }}>ou</span>
+          </div>
+
+          <button key={COMPLETE_PROFILE.id} onClick={()=>openProfile(COMPLETE_PROFILE)}
+            style={{ width:"100%", padding:"20px 24px", background:`linear-gradient(135deg, ${COMPLETE_PROFILE.color}22 0%, rgba(255,255,255,0.04) 100%)`, border:`1px solid ${COMPLETE_PROFILE.color}66`, borderLeft:`4px solid ${COMPLETE_PROFILE.color}`, borderRadius:16, cursor:"pointer", textAlign:"left", color:"#f0f0f0", display:"flex", alignItems:"center", gap:16 }}>
+            <span style={{ fontSize:32 }}>{COMPLETE_PROFILE.emoji}</span>
+            <div>
+              <div style={{ fontWeight:"bold", fontSize:16, color:COMPLETE_PROFILE.color }}>{COMPLETE_PROFILE.name}</div>
+              <div style={{ fontSize:12, color:"#888", marginTop:3 }}>{COMPLETE_PROFILE.regime}</div>
+            </div>
+            <span style={{ marginLeft:"auto", color:COMPLETE_PROFILE.color, fontSize:20 }}>→</span>
+          </button>
         </div>
       )}
 
@@ -130,18 +269,20 @@ export default function App() {
                 <div style={{ fontWeight:"bold", color:profile.color, fontSize:18 }}>{profile.name}</div>
                 <div style={{ fontSize:11, color:"#666" }}>{profile.regime}</div>
               </div>
-              <button onClick={()=>{genMenus(profile);genCourses(profile);}}
+              <button onClick={()=>{ if(!isComplete) genMenus(profile); genCourses(profile); }}
                 style={{ marginLeft:"auto", background:profile.color+"22", color:profile.color, border:`1px solid ${profile.color}44`, borderRadius:20, padding:"5px 12px", fontSize:12, cursor:"pointer" }}>
                 🔄 Regénérer
               </button>
             </div>
-            <div style={{ display:"flex", borderBottom:"1px solid #222" }}>
-              <button style={tabSt(tab==="menus",profile.color)} onClick={()=>setTab("menus")}>📅 Menus 7 jours</button>
-              <button style={tabSt(tab==="courses",profile.color)} onClick={()=>setTab("courses")}>🛒 Liste de courses</button>
-            </div>
+            {!isComplete && (
+              <div style={{ display:"flex", borderBottom:"1px solid #222" }}>
+                <button style={tabSt(tab==="menus",profile.color)} onClick={()=>setTab("menus")}>📅 Menus 7 jours</button>
+                <button style={tabSt(tab==="courses",profile.color)} onClick={()=>setTab("courses")}>🛒 Liste de courses</button>
+              </div>
+            )}
           </div>
 
-          {tab==="menus" && (
+          {!isComplete && tab==="menus" && (
             <div style={{ padding:"16px 20px" }}>
               {loadingMenus && <div style={{ textAlign:"center", padding:"50px 0", color:"#888" }}>⏳ Génération des menus...</div>}
               {errorMenus && <div style={{ padding:16, background:"#FF5722", borderRadius:12, textAlign:"center", marginBottom:16 }}>{errorMenus}</div>}
@@ -162,9 +303,9 @@ export default function App() {
             </div>
           )}
 
-          {tab==="courses" && (
+          {(isComplete || tab==="courses") && (
             <div style={{ padding:"16px 20px" }}>
-              {loadingCourses && <div style={{ textAlign:"center", padding:"50px 0", color:"#888" }}>⏳ Génération de la liste...</div>}
+              {loadingCourses && <div style={{ textAlign:"center", padding:"50px 0", color:"#888" }}>⏳ {isComplete ? "Fusion des 3 listes..." : "Génération de la liste..."}</div>}
               {errorCourses && <div style={{ padding:16, background:"#FF5722", borderRadius:12, textAlign:"center" }}>{errorCourses}</div>}
               {!loadingCourses && courses && courses.length>0 && (
                 <>
@@ -182,19 +323,24 @@ export default function App() {
                   <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:10 }}>
                     {cats.map(c=><button key={c} onClick={()=>setFilterCat(c)} style={pill(filterCat===c,"#fff")}>{c}</button>)}
                   </div>
-                  {filteredCourses.map((item,i)=>(
-                    <div key={i} style={{ display:"flex", alignItems:"center", gap:12, padding:"14px 16px", marginBottom:8, background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.07)", borderRadius:12 }}>
-                      <div style={{ width:10, height:10, borderRadius:"50%", flexShrink:0, background:CAT_COLORS[item.categorie]||"#888" }} />
-                      <div style={{ flex:1 }}>
-                        <div style={{ fontWeight:"bold", fontSize:14 }}>{item.produit}</div>
-                        <div style={{ fontSize:11, color:"#666", marginTop:2 }}>{item.quantite} · {item.categorie}</div>
-                      </div>
-                      <div style={{ textAlign:"right" }}>
-                        <div style={{ fontSize:11, fontWeight:"bold", background:"rgba(255,255,255,0.1)", borderRadius:8, padding:"3px 8px", marginBottom:3 }}>{item.magasin}</div>
-                        {item.prix && <div style={{ fontSize:11, color:profile.color }}>~{item.prix}</div>}
-                      </div>
-                    </div>
-                  ))}
+
+                  {isComplete && groupedByMag ? (
+                    Object.entries(groupedByMag).map(([mag, items]) => {
+                      const checkedCount = items.filter(it => it.checked).length;
+                      return (
+                        <div key={mag} style={{ marginBottom:18 }}>
+                          <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 4px 10px", borderBottom:`1px solid ${profile.color}33`, marginBottom:10 }}>
+                            <span style={{ fontSize:16 }}>🏪</span>
+                            <span style={{ fontWeight:"bold", color:profile.color, fontSize:14 }}>{mag}</span>
+                            <span style={{ fontSize:11, color:"#666", marginLeft:"auto" }}>{checkedCount}/{items.length}</span>
+                          </div>
+                          {items.map(item => renderItem(item))}
+                        </div>
+                      );
+                    })
+                  ) : (
+                    filteredCourses.map(item => renderItem(item))
+                  )}
                 </>
               )}
             </div>
