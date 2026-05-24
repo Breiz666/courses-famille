@@ -96,6 +96,16 @@ const formatRelative = (ts) => {
 
 const sortByChecked = (arr) => [...arr].sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0));
 
+// Build a Drive search URL for a given store + product
+const driveURL = (magasin, produit) => {
+  const q = encodeURIComponent(produit || "");
+  const m = (magasin || "").toLowerCase();
+  if (m.includes("lidl")) return `https://www.lidl.fr/q/query/${q}`;
+  if (m.includes("leclerc")) return `https://www.leclercdrive.fr/recherche-globale?q=${q}`;
+  if (m.includes("super u") || m === "u" || m.includes("coursesu")) return `https://www.coursesu.com/rechercher?q=${q}`;
+  return `https://www.google.com/search?q=${q}+${encodeURIComponent(magasin || "")}`;
+};
+
 // Merge duplicate products across the 3 profiles' lists into single rows
 const mergeDuplicates = (items) => {
   const norm = s => (s || "").trim().toLowerCase();
@@ -143,6 +153,8 @@ export default function App() {
   const [showAddForm, setShowAddForm] = useState(false);
   const [newItem, setNewItem] = useState({ produit: "", quantite: "", magasin: "Lidl", categorie: "Épicerie" });
   const [shareNotice, setShareNotice] = useState(null);
+  const [templates, setTemplates] = useState([]);
+  const [showConcentrateMenu, setShowConcentrateMenu] = useState(false);
   // tick for relative time refresh
   const [, setTick] = useState(0);
 
@@ -157,6 +169,7 @@ export default function App() {
       t[id] = computeTotal(items);
     });
     setTotals(t);
+    setTemplates(loadLS(`${LS_PREFIX}-templates`) || []);
   }, [screen]);
 
   // refresh relative dates every minute
@@ -297,6 +310,65 @@ export default function App() {
     saveLS(`${LS_PREFIX}-${profile.id}-courses`, updated);
   };
 
+  const concentrateMagasin = async (magasin) => {
+    if (!courses || !profile) return;
+    if (!confirm(`Concentrer toutes les courses chez ${magasin} ? Les prix seront actualisés via recherche web.`)) return;
+    const updated = courses.map(it => ({ ...it, magasin }));
+    setCourses(updated);
+    saveLS(`${LS_PREFIX}-${profile.id}-courses`, updated);
+    setShowConcentrateMenu(false);
+    setFilterMag("Tous");
+    // Auto-trigger price refresh against the new store
+    await refreshPrices();
+  };
+
+  const saveAsTemplate = () => {
+    if (!courses || courses.length === 0 || !profile) return;
+    const name = prompt("Nom du modèle :", `${profile.name} - ${new Date().toLocaleDateString("fr-FR")}`);
+    if (!name || !name.trim()) return;
+    const existing = loadLS(`${LS_PREFIX}-templates`) || [];
+    const newTpl = {
+      id: `tpl-${Date.now()}`,
+      name: name.trim(),
+      profileId: profile.id,
+      profileName: profile.name,
+      profileColor: profile.color,
+      profileEmoji: profile.emoji,
+      items: courses.map(it => ({ ...it, checked: false })), // reset checks for templates
+      savedAt: Date.now()
+    };
+    const updated = [...existing, newTpl];
+    saveLS(`${LS_PREFIX}-templates`, updated);
+    setTemplates(updated);
+    setShareNotice(`✓ Modèle "${name}" sauvegardé`);
+    setTimeout(() => setShareNotice(null), 2500);
+  };
+
+  const loadTemplate = (tpl) => {
+    const targetProfile = tpl.profileId === "complete" ? COMPLETE_PROFILE : PROFILES[tpl.profileId];
+    if (!targetProfile) return;
+    if (!confirm(`Charger le modèle "${tpl.name}" pour ${tpl.profileName} ? La liste actuelle sera remplacée.`)) return;
+    setProfile(targetProfile);
+    setScreen("detail");
+    setTab("courses");
+    setMenus(loadLS(`${LS_PREFIX}-${targetProfile.id}-menus`));
+    setMenusGeneratedAt(loadLS(`${LS_PREFIX}-${targetProfile.id}-menus-generated`));
+    setCourses(tpl.items);
+    setCoursesGeneratedAt(tpl.savedAt);
+    saveLS(`${LS_PREFIX}-${targetProfile.id}-courses`, tpl.items);
+    saveLS(`${LS_PREFIX}-${targetProfile.id}-courses-generated`, tpl.savedAt);
+    setFilterCat("Toutes");
+    setFilterMag("Tous");
+  };
+
+  const deleteTemplate = (id, e) => {
+    if (e) e.stopPropagation();
+    if (!confirm("Supprimer ce modèle ?")) return;
+    const updated = templates.filter(t => t.id !== id);
+    setTemplates(updated);
+    saveLS(`${LS_PREFIX}-templates`, updated);
+  };
+
   const addItem = () => {
     if (!profile || !newItem.produit.trim()) return;
     const item = {
@@ -433,7 +505,16 @@ export default function App() {
           </div>
         </div>
         <div style={{ textAlign:"right", flexShrink:0, display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 }}>
-          <div style={{ fontSize:11, fontWeight:"bold", background:"rgba(255,255,255,0.1)", borderRadius:8, padding:"3px 8px" }}>{item.magasin}</div>
+          <a
+            href={driveURL(item.magasin, item.produit)}
+            target="_blank"
+            rel="noopener noreferrer"
+            onClick={(e) => e.stopPropagation()}
+            title={`Ouvrir "${item.produit}" sur ${item.magasin}`}
+            style={{ fontSize:11, fontWeight:"bold", background:"rgba(255,255,255,0.1)", borderRadius:8, padding:"3px 8px", color:"#fff", textDecoration:"none", display:"inline-flex", alignItems:"center", gap:4 }}
+          >
+            {item.magasin}<span style={{ fontSize:9, opacity:0.7 }}>↗</span>
+          </a>
           {item.prix && <div style={{ fontSize:11, color:accent }}>~{item.prix}</div>}
         </div>
         <button
@@ -494,6 +575,30 @@ export default function App() {
             </div>
             <span style={{ color:COMPLETE_PROFILE.color, fontSize:20 }}>→</span>
           </button>
+
+          {templates.length > 0 && (
+            <div style={{ marginTop:32 }}>
+              <div style={{ fontSize:12, color:"#666", letterSpacing:1, textTransform:"uppercase", marginBottom:12, paddingLeft:4 }}>
+                📋 Mes modèles
+              </div>
+              {templates.map(tpl => (
+                <button key={tpl.id} onClick={() => loadTemplate(tpl)}
+                  style={{ width:"100%", marginBottom:10, padding:"14px 16px", background:"rgba(255,255,255,0.03)", border:`1px solid ${tpl.profileColor}33`, borderLeft:`3px solid ${tpl.profileColor}`, borderRadius:12, cursor:"pointer", textAlign:"left", color:"#f0f0f0", display:"flex", alignItems:"center", gap:12 }}>
+                  <span style={{ fontSize:22, flexShrink:0 }}>{tpl.profileEmoji}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:14, fontWeight:"bold", color:tpl.profileColor, marginBottom:2, overflow:"hidden", textOverflow:"ellipsis", whiteSpace:"nowrap" }}>{tpl.name}</div>
+                    <div style={{ fontSize:11, color:"#666" }}>
+                      {tpl.items.length} articles · ~{computeTotal(tpl.items).toFixed(2)}€ · {formatRelative(tpl.savedAt)}
+                    </div>
+                  </div>
+                  <button onClick={(e) => deleteTemplate(tpl.id, e)} aria-label="Supprimer le modèle"
+                    style={{ background:"transparent", border:"none", color:"#555", fontSize:14, cursor:"pointer", padding:"4px 6px", flexShrink:0 }}>
+                    ✕
+                  </button>
+                </button>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
@@ -610,7 +715,7 @@ export default function App() {
                       🔍 Recherche des prix actuels sur le web... (1-2 min, prix mis à jour à la fin)
                     </div>
                   )}
-                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
+                  <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
                     {Object.entries(byMag).map(([m,c])=>(
                       <div key={m} style={{ background:"rgba(255,255,255,0.06)", borderRadius:20, padding:"5px 12px", fontSize:12, display:"flex", gap:6, alignItems:"center" }}>
                         <span style={{ color:"#fff", fontWeight:"bold" }}>{m}</span>
@@ -618,6 +723,17 @@ export default function App() {
                       </div>
                     ))}
                   </div>
+                  {Object.keys(byMag).length > 1 && (
+                    <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:14, padding:"8px 10px", background:"rgba(255,255,255,0.03)", border:"1px dashed rgba(255,255,255,0.1)", borderRadius:10 }}>
+                      <span style={{ fontSize:11, color:"#888", marginRight:4 }}>🛍️ Tout livrer chez :</span>
+                      {[...new Set([...Object.keys(byMag), ...MAGASINS_DEFAULT])].map(m => (
+                        <button key={m} onClick={() => concentrateMagasin(m)} disabled={loadingPrices}
+                          style={{ padding:"4px 10px", background:profile.color+"22", border:`1px solid ${profile.color}55`, borderRadius:14, fontSize:11, color:profile.color, cursor:loadingPrices?"wait":"pointer", whiteSpace:"nowrap", opacity:loadingPrices?0.5:1 }}>
+                          ⇄ {m}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4, marginBottom:4 }}>
                     {mags.map(m=><button key={m} onClick={()=>setFilterMag(m)} style={pill(filterMag===m,profile.color)}>{m}</button>)}
                   </div>
@@ -684,6 +800,11 @@ export default function App() {
                       </div>
                     </div>
                   )}
+
+                  <button onClick={saveAsTemplate}
+                    style={{ width:"100%", marginTop:10, padding:"10px", background:"transparent", border:`1px solid ${profile.color}33`, borderRadius:10, color:"#888", fontSize:12, cursor:"pointer" }}>
+                    💾 Sauvegarder cette liste comme modèle
+                  </button>
                 </>
               )}
             </div>
