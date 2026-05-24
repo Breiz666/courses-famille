@@ -580,9 +580,22 @@ export default function App() {
                 <>
                   <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12, gap:10 }}>
                     <div>
-                      <div style={{ fontSize:13, color:"#aaa" }}>
-                        💰 Total estimé : <span style={{ color:profile.color, fontWeight:"bold" }}>~{computeTotal(courses).toFixed(2)}€</span>
-                      </div>
+                      {(() => {
+                        const noFilter = filterMag === "Tous" && filterCat === "Toutes";
+                        const filterParts = [];
+                        if (filterMag !== "Tous") filterParts.push(filterMag);
+                        if (filterCat !== "Toutes") filterParts.push(filterCat);
+                        const filteredTotal = computeTotal(filteredCourses);
+                        const grandTotal = computeTotal(courses);
+                        return (
+                          <div style={{ fontSize:13, color:"#aaa" }}>
+                            💰 Total {noFilter ? "estimé" : filterParts.join(" · ")} : <span style={{ color:profile.color, fontWeight:"bold" }}>~{filteredTotal.toFixed(2)}€</span>
+                            {!noFilter && (
+                              <span style={{ color:"#666", fontSize:11, marginLeft:6 }}>/ {grandTotal.toFixed(2)}€ total</span>
+                            )}
+                          </div>
+                        );
+                      })()}
                       {coursesGeneratedAt && (
                         <div style={{ fontSize:11, color:"#666", marginTop:3 }}>📅 Générée {formatRelative(coursesGeneratedAt)}</div>
                       )}
