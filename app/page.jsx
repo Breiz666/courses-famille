@@ -97,6 +97,15 @@ const formatRelative = (ts) => {
 
 const sortByChecked = (arr) => [...arr].sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0));
 
+// Cost estimates per action (Anthropic API : tokens + web searches)
+const COSTS = {
+  generate: "≈ $0.05",        // genCourses / genMenus pour 1 profil
+  generateAll: "≈ $0.15",     // genCourses / genMenus pour profil "complete" (×3)
+  refresh: "≈ $0.30",         // refreshPrices (~25 web searches)
+  optimize: "≈ $0.80",        // optimizePrices (~60-75 web searches sur 3 magasins)
+  concentrate: "≈ $0.30"      // concentrateMagasin (déclenche refreshPrices)
+};
+
 // Build a Google site-search URL for a given store + product
 // Note: tested Lidl/Leclerc/Coursesu direct search URLs all failed or were
 // unverifiable (403 bot blocking). Google site search is the only reliable
@@ -672,7 +681,7 @@ export default function App() {
                 <div style={{ fontSize:11, color:"#666" }}>{profile.regime}</div>
               </div>
               <button onClick={shareList} title="Partager la liste" style={headerBtn(profile.color)}>📤</button>
-              <button onClick={()=>{ genMenus(profile); genCourses(profile); }} title="Regénérer" style={headerBtn(profile.color)}>🔄</button>
+              <button onClick={()=>{ genMenus(profile); genCourses(profile); }} title={`Regénérer menus + courses (${isComplete ? COSTS.generateAll : COSTS.generate})`} style={headerBtn(profile.color)}>🔄</button>
             </div>
             <div style={{ display:"flex", borderBottom:"1px solid #222" }}>
               <button style={tabSt(tab==="menus",profile.color)} onClick={()=>setTab("menus")}>📅 Menus 7 jours</button>
@@ -764,15 +773,21 @@ export default function App() {
                         <div style={{ fontSize:11, color:"#666", marginTop:3 }}>📅 Générée {formatRelative(coursesGeneratedAt)}</div>
                       )}
                     </div>
-                    <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
-                      <button onClick={refreshPrices} disabled={loadingPrices || loadingOptimize}
-                        style={{ background:profile.color+"22", color:profile.color, border:`1px solid ${profile.color}44`, borderRadius:20, padding:"5px 12px", fontSize:12, cursor:(loadingPrices||loadingOptimize)?"wait":"pointer", opacity:(loadingPrices||loadingOptimize)?0.6:1, whiteSpace:"nowrap" }}>
-                        {loadingPrices ? "⏳ Recherche..." : "🔍 Prix réels"}
-                      </button>
-                      <button onClick={optimizePrices} disabled={loadingPrices || loadingOptimize}
-                        style={{ background:"transparent", color:profile.color, border:`1px dashed ${profile.color}66`, borderRadius:20, padding:"5px 12px", fontSize:12, cursor:(loadingPrices||loadingOptimize)?"wait":"pointer", opacity:(loadingPrices||loadingOptimize)?0.6:1, whiteSpace:"nowrap" }}>
-                        {loadingOptimize ? "⏳ Optim..." : "🎯 Optimiser"}
-                      </button>
+                    <div style={{ display:"flex", flexDirection:"column", gap:10, alignItems:"flex-end" }}>
+                      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:2 }}>
+                        <button onClick={refreshPrices} disabled={loadingPrices || loadingOptimize}
+                          style={{ background:profile.color+"22", color:profile.color, border:`1px solid ${profile.color}44`, borderRadius:20, padding:"5px 12px", fontSize:12, cursor:(loadingPrices||loadingOptimize)?"wait":"pointer", opacity:(loadingPrices||loadingOptimize)?0.6:1, whiteSpace:"nowrap" }}>
+                          {loadingPrices ? "⏳ Recherche..." : "🔍 Prix réels"}
+                        </button>
+                        <span style={{ fontSize:9, color:"#555", letterSpacing:0.3 }}>{COSTS.refresh}</span>
+                      </div>
+                      <div style={{ display:"flex", flexDirection:"column", alignItems:"flex-end", gap:2 }}>
+                        <button onClick={optimizePrices} disabled={loadingPrices || loadingOptimize}
+                          style={{ background:"transparent", color:profile.color, border:`1px dashed ${profile.color}66`, borderRadius:20, padding:"5px 12px", fontSize:12, cursor:(loadingPrices||loadingOptimize)?"wait":"pointer", opacity:(loadingPrices||loadingOptimize)?0.6:1, whiteSpace:"nowrap" }}>
+                          {loadingOptimize ? "⏳ Optim..." : "🎯 Optimiser"}
+                        </button>
+                        <span style={{ fontSize:9, color:"#555", letterSpacing:0.3 }}>{COSTS.optimize}</span>
+                      </div>
                     </div>
                   </div>
                   {loadingPrices && (
@@ -795,7 +810,7 @@ export default function App() {
                   </div>
                   {Object.keys(byMag).length > 1 && (
                     <div style={{ display:"flex", gap:6, flexWrap:"wrap", alignItems:"center", marginBottom:14, padding:"8px 10px", background:"rgba(255,255,255,0.03)", border:"1px dashed rgba(255,255,255,0.1)", borderRadius:10 }}>
-                      <span style={{ fontSize:11, color:"#888", marginRight:4 }}>🛍️ Tout livrer chez :</span>
+                      <span style={{ fontSize:11, color:"#888", marginRight:4 }}>🛍️ Tout livrer chez : <span style={{ color:"#555" }}>({COSTS.concentrate})</span></span>
                       {[...new Set([...Object.keys(byMag), ...MAGASINS_DEFAULT])].map(m => (
                         <button key={m} onClick={() => concentrateMagasin(m)} disabled={loadingPrices}
                           style={{ padding:"4px 10px", background:profile.color+"22", border:`1px solid ${profile.color}55`, borderRadius:14, fontSize:11, color:profile.color, cursor:loadingPrices?"wait":"pointer", whiteSpace:"nowrap", opacity:loadingPrices?0.5:1 }}>
