@@ -909,6 +909,7 @@ export default function App() {
               Bascule cet article vers un magasin qui livre :
             </div>
             <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              <div style={{ fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:1, marginBottom:2, paddingLeft:2 }}>Livraison à domicile</div>
               <button onClick={() => switchItemMagasin(switchLidlIdx, "Leclerc")}
                 style={{ padding:"12px", background:"#22C55E22", border:"1px solid #22C55E55", borderRadius:10, color:"#22C55E", fontSize:14, fontWeight:"bold", cursor:"pointer" }}>
                 🛒 Basculer vers Leclerc
@@ -917,8 +918,14 @@ export default function App() {
                 style={{ padding:"12px", background:"#22C55E22", border:"1px solid #22C55E55", borderRadius:10, color:"#22C55E", fontSize:14, fontWeight:"bold", cursor:"pointer" }}>
                 🛒 Basculer vers Super U
               </button>
+              <div style={{ fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:1, marginTop:10, marginBottom:2, paddingLeft:2 }}>Aller en magasin</div>
+              <a href="https://www.google.com/maps/search/Lidl"
+                target="_blank" rel="noopener noreferrer"
+                style={{ padding:"12px", background:"rgba(255,180,0,0.15)", border:"1px solid rgba(255,180,0,0.4)", borderRadius:10, color:"#FFB347", fontSize:14, fontWeight:"bold", cursor:"pointer", textDecoration:"none", textAlign:"center", display:"block" }}>
+                📍 Trouver le Lidl le plus proche
+              </a>
               <button onClick={() => setSwitchLidlIdx(null)}
-                style={{ padding:"10px", marginTop:4, background:"transparent", border:"1px solid #444", borderRadius:10, color:"#888", fontSize:13, cursor:"pointer" }}>
+                style={{ padding:"10px", marginTop:8, background:"transparent", border:"1px solid #444", borderRadius:10, color:"#888", fontSize:13, cursor:"pointer" }}>
                 Annuler
               </button>
             </div>
