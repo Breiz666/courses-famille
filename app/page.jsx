@@ -32,11 +32,14 @@ const ALL_PROFILES_ARR = [PROFILES.renald, PROFILES.gwenaelle, PROFILES.famille]
 const CAT_COLORS = {
   "Légumes":"#4CAF50","Protéines":"#FF5722","Féculents":"#FF9800",
   "Produits laitiers":"#2196F3","Fruits":"#E91E63","Épicerie":"#9C27B0",
-  "Snacks":"#795548","Boissons":"#00BCD4","Boulangerie":"#8BC34A"
+  "Snacks":"#795548","Boissons":"#00BCD4","Boulangerie":"#8BC34A","Autre":"#888"
 };
 
 const REPAS_ICONS = { petit_dejeuner:"☀️", dejeuner:"🌤️", diner:"🌙" };
 const REPAS_LABELS = { petit_dejeuner:"Petit-déjeuner", dejeuner:"Déjeuner", diner:"Dîner" };
+
+const MAGASINS_DEFAULT = ["Lidl", "Leclerc", "Super U"];
+const CATEGORIES_DEFAULT = ["Légumes", "Protéines", "Féculents", "Produits laitiers", "Fruits", "Épicerie", "Boulangerie", "Snacks", "Boissons", "Autre"];
 
 const LS_PREFIX = "courses-app-v1";
 const loadLS = (key) => {
@@ -78,6 +81,49 @@ const parsePrice = (s) => {
 
 const computeTotal = (items) => (items || []).reduce((a, i) => a + parsePrice(i.prix), 0);
 
+const formatRelative = (ts) => {
+  if (!ts) return null;
+  const diff = Date.now() - ts;
+  if (diff < 0) return "à l'instant";
+  const m = Math.floor(diff / 60000);
+  if (m < 1) return "à l'instant";
+  if (m < 60) return `il y a ${m} min`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `il y a ${h}h`;
+  const d = Math.floor(h / 24);
+  return `il y a ${d}j`;
+};
+
+const sortByChecked = (arr) => [...arr].sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0));
+
+// Merge duplicate products across the 3 profiles' lists into single rows
+const mergeDuplicates = (items) => {
+  const norm = s => (s || "").trim().toLowerCase();
+  const map = new Map();
+  items.forEach(item => {
+    const key = norm(item.produit);
+    if (!map.has(key)) {
+      const { pour, pourColor, ...rest } = item;
+      map.set(key, {
+        ...rest,
+        pours: pour ? [{ name: pour, color: pourColor }] : [],
+        _quantites: [item.quantite].filter(Boolean),
+        _prixTotal: parsePrice(item.prix)
+      });
+    } else {
+      const ex = map.get(key);
+      if (item.pour) ex.pours.push({ name: item.pour, color: item.pourColor });
+      if (item.quantite) ex._quantites.push(item.quantite);
+      ex._prixTotal += parsePrice(item.prix);
+    }
+  });
+  return Array.from(map.values()).map(it => ({
+    ...it,
+    quantite: it._quantites.join(" + "),
+    prix: it._prixTotal > 0 ? `${it._prixTotal.toFixed(2)}€` : it.prix
+  }));
+};
+
 export default function App() {
   const [screen, setScreen] = useState("home");
   const [profile, setProfile] = useState(null);
@@ -92,6 +138,13 @@ export default function App() {
   const [filterMag, setFilterMag] = useState("Tous");
   const [loadingPrices, setLoadingPrices] = useState(false);
   const [totals, setTotals] = useState({ renald: 0, gwenaelle: 0, famille: 0, complete: 0 });
+  const [coursesGeneratedAt, setCoursesGeneratedAt] = useState(null);
+  const [menusGeneratedAt, setMenusGeneratedAt] = useState(null);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newItem, setNewItem] = useState({ produit: "", quantite: "", magasin: "Lidl", categorie: "Épicerie" });
+  const [shareNotice, setShareNotice] = useState(null);
+  // tick for relative time refresh
+  const [, setTick] = useState(0);
 
   const isComplete = profile?.id === "complete";
 
@@ -106,22 +159,34 @@ export default function App() {
     setTotals(t);
   }, [screen]);
 
+  // refresh relative dates every minute
+  useEffect(() => {
+    if (screen !== "detail") return;
+    const id = setInterval(() => setTick(t => t + 1), 60000);
+    return () => clearInterval(id);
+  }, [screen]);
+
   const openProfile = (p) => {
     setProfile(p);
     setScreen("detail");
-    setTab(p.id === "complete" ? "courses" : "menus");
+    setTab("menus");
     setErrorMenus(null);
     setErrorCourses(null);
     setFilterCat("Toutes");
     setFilterMag("Tous");
+    setShowAddForm(false);
 
-    const cachedMenus = p.id !== "complete" ? loadLS(`${LS_PREFIX}-${p.id}-menus`) : null;
+    const cachedMenus = loadLS(`${LS_PREFIX}-${p.id}-menus`);
     const cachedCourses = loadLS(`${LS_PREFIX}-${p.id}-courses`);
+    const menusGen = loadLS(`${LS_PREFIX}-${p.id}-menus-generated`);
+    const coursesGen = loadLS(`${LS_PREFIX}-${p.id}-courses-generated`);
 
     setMenus(cachedMenus);
     setCourses(cachedCourses);
+    setMenusGeneratedAt(menusGen);
+    setCoursesGeneratedAt(coursesGen);
 
-    if (!cachedMenus && p.id !== "complete") genMenus(p);
+    if (!cachedMenus) genMenus(p);
     if (!cachedCourses) genCourses(p);
   };
 
@@ -129,10 +194,26 @@ export default function App() {
     setLoadingMenus(true);
     setErrorMenus(null);
     try {
-      const d = await callClaude(p.menuPrompt);
-      const data = d.jours || [];
+      let data;
+      if (p.id === "complete") {
+        const results = await Promise.all(
+          ALL_PROFILES_ARR.map(prof =>
+            callClaude(prof.menuPrompt)
+              .then(d => ({ profile: { id: prof.id, name: prof.name, emoji: prof.emoji, color: prof.color }, jours: d.jours || [] }))
+              .catch(() => ({ profile: { id: prof.id, name: prof.name, emoji: prof.emoji, color: prof.color }, jours: [] }))
+          )
+        );
+        if (results.every(r => r.jours.length === 0)) throw new Error("empty");
+        data = results;
+      } else {
+        const d = await callClaude(p.menuPrompt);
+        data = d.jours || [];
+      }
+      const now = Date.now();
       setMenus(data);
+      setMenusGeneratedAt(now);
       saveLS(`${LS_PREFIX}-${p.id}-menus`, data);
+      saveLS(`${LS_PREFIX}-${p.id}-menus-generated`, now);
     } catch {
       setErrorMenus("Erreur menus. Réessaie.");
     } finally {
@@ -144,6 +225,8 @@ export default function App() {
     setLoadingCourses(true);
     setErrorCourses(null);
     try {
+      // Preserve manual items across regeneration
+      const existingManual = (courses || []).filter(it => it.manual);
       let items;
       if (p.id === "complete") {
         const results = await Promise.all(
@@ -153,15 +236,20 @@ export default function App() {
               .catch(() => [])
           )
         );
-        items = results.flat();
-        if (items.length === 0) throw new Error("empty");
+        const allItems = results.flat();
+        if (allItems.length === 0) throw new Error("empty");
+        items = mergeDuplicates(allItems);
       } else {
         const d = await callClaude(p.coursesPrompt);
         items = d.liste || [];
       }
       const itemsWithCheck = items.map(i => ({ ...i, checked: false }));
-      setCourses(itemsWithCheck);
-      saveLS(`${LS_PREFIX}-${p.id}-courses`, itemsWithCheck);
+      const final = [...itemsWithCheck, ...existingManual];
+      const now = Date.now();
+      setCourses(final);
+      setCoursesGeneratedAt(now);
+      saveLS(`${LS_PREFIX}-${p.id}-courses`, final);
+      saveLS(`${LS_PREFIX}-${p.id}-courses-generated`, now);
     } catch {
       setErrorCourses("Erreur courses. Réessaie.");
     } finally {
@@ -202,10 +290,78 @@ export default function App() {
     saveLS(`${LS_PREFIX}-${profile.id}-courses`, updated);
   };
 
+  const deleteItem = (idx) => {
+    if (!courses || !profile) return;
+    const updated = courses.filter((_, i) => i !== idx);
+    setCourses(updated);
+    saveLS(`${LS_PREFIX}-${profile.id}-courses`, updated);
+  };
+
+  const addItem = () => {
+    if (!profile || !newItem.produit.trim()) return;
+    const item = {
+      produit: newItem.produit.trim(),
+      quantite: newItem.quantite.trim() || "1",
+      magasin: newItem.magasin,
+      categorie: newItem.categorie,
+      prix: "",
+      checked: false,
+      manual: true
+    };
+    const updated = [...(courses || []), item];
+    setCourses(updated);
+    saveLS(`${LS_PREFIX}-${profile.id}-courses`, updated);
+    setNewItem({ produit: "", quantite: "", magasin: newItem.magasin, categorie: newItem.categorie });
+    setShowAddForm(false);
+  };
+
+  const shareList = async () => {
+    if (!courses || courses.length === 0 || !profile) return;
+    const lines = [`🛒 ${profile.name} — Liste de courses`, ""];
+    const byM = courses.reduce((acc, it) => {
+      const m = it.magasin || "Autre";
+      if (!acc[m]) acc[m] = [];
+      acc[m].push(it);
+      return acc;
+    }, {});
+    Object.entries(byM).forEach(([m, items]) => {
+      lines.push(`🏪 ${m}`);
+      sortByChecked(items).forEach(it => {
+        const check = it.checked ? "☑" : "☐";
+        const prix = it.prix ? ` (${it.prix})` : "";
+        const q = it.quantite ? ` — ${it.quantite}` : "";
+        lines.push(`${check} ${it.produit}${q}${prix}`);
+      });
+      lines.push("");
+    });
+    lines.push(`💰 Total estimé : ~${computeTotal(courses).toFixed(2)}€`);
+    if (coursesGeneratedAt) lines.push(`📅 Générée ${formatRelative(coursesGeneratedAt)}`);
+    const text = lines.join("\n");
+
+    try {
+      if (typeof navigator !== "undefined" && navigator.share) {
+        await navigator.share({ title: `Courses — ${profile.name}`, text });
+        return;
+      }
+      if (typeof navigator !== "undefined" && navigator.clipboard) {
+        await navigator.clipboard.writeText(text);
+        setShareNotice("✓ Liste copiée dans le presse-papier");
+        setTimeout(() => setShareNotice(null), 2500);
+        return;
+      }
+      setShareNotice("Partage indisponible sur cet appareil");
+      setTimeout(() => setShareNotice(null), 2500);
+    } catch {
+      // user cancelled share, no-op
+    }
+  };
+
   const cats = courses ? ["Toutes", ...new Set(courses.map(i => i.categorie))] : [];
   const mags = courses ? ["Tous", ...new Set(courses.map(i => i.magasin))] : [];
-  const filteredCourses = (courses||[]).map((it, idx)=>({ ...it, _idx: idx })).filter(i =>
-    (filterCat==="Toutes"||i.categorie===filterCat) && (filterMag==="Tous"||i.magasin===filterMag)
+  const filteredCourses = sortByChecked(
+    (courses||[]).map((it, idx)=>({ ...it, _idx: idx })).filter(i =>
+      (filterCat==="Toutes"||i.categorie===filterCat) && (filterMag==="Tous"||i.magasin===filterMag)
+    )
   );
   const byMag = (courses||[]).reduce((a,i)=>{ a[i.magasin]=(a[i.magasin]||0)+1; return a; },{});
 
@@ -229,10 +385,16 @@ export default function App() {
     background:"transparent", color:active?color:"#666",
     fontWeight:active?"bold":"normal", cursor:"pointer", fontSize:13
   });
+  const headerBtn = (color) => ({
+    background:color+"22", color:color, border:`1px solid ${color}44`,
+    borderRadius:20, padding:"5px 10px", fontSize:13, cursor:"pointer",
+    lineHeight:1
+  });
 
   const renderItem = (item) => {
     const checked = !!item.checked;
     const accent = profile?.color || "#888";
+    const pours = item.pours && item.pours.length ? item.pours : (item.pour ? [{ name: item.pour, color: item.pourColor }] : []);
     return (
       <div
         key={item._idx}
@@ -259,18 +421,31 @@ export default function App() {
         </div>
         <div style={{ width:8, height:8, borderRadius:"50%", flexShrink:0, background:CAT_COLORS[item.categorie]||"#888" }} />
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontWeight:"bold", fontSize:14 }}>{item.produit}</div>
+          <div style={{ fontWeight:"bold", fontSize:14, display:"flex", alignItems:"center", gap:6 }}>
+            <span>{item.produit}</span>
+            {item.manual && <span style={{ fontSize:9, color:"#888", background:"rgba(255,255,255,0.08)", padding:"1px 6px", borderRadius:8, fontWeight:"normal" }}>ajouté</span>}
+          </div>
           <div style={{ fontSize:11, color:"#666", marginTop:2 }}>
             {item.quantite} · {item.categorie}
-            {item.pour && (
-              <span style={{ color: item.pourColor || "#888", marginLeft:6 }}>· 👤 {item.pour}</span>
-            )}
+            {pours.map((p, i) => (
+              <span key={i} style={{ color: p.color || "#888", marginLeft:6 }}>· 👤 {p.name}</span>
+            ))}
           </div>
         </div>
-        <div style={{ textAlign:"right", flexShrink:0 }}>
-          <div style={{ fontSize:11, fontWeight:"bold", background:"rgba(255,255,255,0.1)", borderRadius:8, padding:"3px 8px", marginBottom:3 }}>{item.magasin}</div>
+        <div style={{ textAlign:"right", flexShrink:0, display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 }}>
+          <div style={{ fontSize:11, fontWeight:"bold", background:"rgba(255,255,255,0.1)", borderRadius:8, padding:"3px 8px" }}>{item.magasin}</div>
           {item.prix && <div style={{ fontSize:11, color:accent }}>~{item.prix}</div>}
         </div>
+        <button
+          onClick={(e) => { e.stopPropagation(); deleteItem(item._idx); }}
+          aria-label="Supprimer"
+          style={{
+            background:"transparent", border:"none", color:"#555", cursor:"pointer",
+            fontSize:16, padding:"4px 6px", flexShrink:0, lineHeight:1
+          }}
+        >
+          ✕
+        </button>
       </div>
     );
   };
@@ -282,7 +457,7 @@ export default function App() {
         <div style={{ padding:"40px 20px", maxWidth:480, margin:"0 auto" }}>
           <div style={{ textAlign:"center", marginBottom:40 }}>
             <div style={{ fontSize:48, marginBottom:8 }}>🛒</div>
-            <h1 style={{ fontSize:26, fontWeight:"bold", margin:0, background:"linear-gradient(90deg,#00C9A7,#FF6B9D)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
+            <h1 style={{ fontSize:26, fontWeight:"bold", margin:0, background:"linear-gradient(90deg,#3B82F6,#A855F7)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
               Courses Familiales
             </h1>
             <p style={{ color:"#888", fontSize:13, marginTop:6 }}>Menus · Régimes · Prix optimisés</p>
@@ -325,31 +500,62 @@ export default function App() {
       {screen==="detail" && profile && (
         <div style={{ maxWidth:500, margin:"0 auto", paddingBottom:40 }}>
           <div style={{ padding:"20px 20px 0", position:"sticky", top:0, background:"linear-gradient(135deg,#0f0f1a,#1a1a2e)", zIndex:10 }}>
-            <div style={{ display:"flex", alignItems:"center", gap:12, marginBottom:16 }}>
+            <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
               <button onClick={()=>setScreen("home")} style={{ background:"none", border:"none", color:"#888", cursor:"pointer", fontSize:22, padding:0 }}>←</button>
               <span style={{ fontSize:26 }}>{profile.emoji}</span>
-              <div>
+              <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontWeight:"bold", color:profile.color, fontSize:18 }}>{profile.name}</div>
                 <div style={{ fontSize:11, color:"#666" }}>{profile.regime}</div>
               </div>
-              <button onClick={()=>{ if(!isComplete) genMenus(profile); genCourses(profile); }}
-                style={{ marginLeft:"auto", background:profile.color+"22", color:profile.color, border:`1px solid ${profile.color}44`, borderRadius:20, padding:"5px 12px", fontSize:12, cursor:"pointer" }}>
-                🔄 Regénérer
-              </button>
+              <button onClick={shareList} title="Partager la liste" style={headerBtn(profile.color)}>📤</button>
+              <button onClick={()=>{ genMenus(profile); genCourses(profile); }} title="Regénérer" style={headerBtn(profile.color)}>🔄</button>
             </div>
-            {!isComplete && (
-              <div style={{ display:"flex", borderBottom:"1px solid #222" }}>
-                <button style={tabSt(tab==="menus",profile.color)} onClick={()=>setTab("menus")}>📅 Menus 7 jours</button>
-                <button style={tabSt(tab==="courses",profile.color)} onClick={()=>setTab("courses")}>🛒 Liste de courses</button>
-              </div>
-            )}
+            <div style={{ display:"flex", borderBottom:"1px solid #222" }}>
+              <button style={tabSt(tab==="menus",profile.color)} onClick={()=>setTab("menus")}>📅 Menus 7 jours</button>
+              <button style={tabSt(tab==="courses",profile.color)} onClick={()=>setTab("courses")}>🛒 Liste de courses</button>
+            </div>
           </div>
 
-          {!isComplete && tab==="menus" && (
+          {shareNotice && (
+            <div style={{ margin:"12px 20px 0", padding:"8px 14px", background:profile.color+"22", border:`1px solid ${profile.color}55`, borderRadius:10, fontSize:13, color:profile.color, textAlign:"center" }}>
+              {shareNotice}
+            </div>
+          )}
+
+          {tab==="menus" && (
             <div style={{ padding:"16px 20px" }}>
               {loadingMenus && <div style={{ textAlign:"center", padding:"50px 0", color:"#888" }}>⏳ Génération des menus...</div>}
               {errorMenus && <div style={{ padding:16, background:"#FF5722", borderRadius:12, textAlign:"center", marginBottom:16 }}>{errorMenus}</div>}
-              {!loadingMenus && menus && menus.map((jour,i) => (
+              {!loadingMenus && menus && menusGeneratedAt && (
+                <div style={{ fontSize:11, color:"#666", marginBottom:12, textAlign:"right" }}>📅 Générés {formatRelative(menusGeneratedAt)}</div>
+              )}
+              {!loadingMenus && menus && isComplete && Array.isArray(menus) && menus[0]?.profile && (
+                menus.map(({ profile: prof, jours }) => (
+                  <div key={prof.id} style={{ marginBottom:24 }}>
+                    <div style={{ display:"flex", alignItems:"center", gap:8, padding:"8px 4px 12px", borderBottom:`1px solid ${prof.color}55`, marginBottom:12 }}>
+                      <span style={{ fontSize:20 }}>{prof.emoji}</span>
+                      <span style={{ fontWeight:"bold", color:prof.color, fontSize:15 }}>{prof.name}</span>
+                    </div>
+                    {jours.length === 0 ? (
+                      <div style={{ fontSize:12, color:"#666", padding:"10px 0", fontStyle:"italic" }}>Menus indisponibles pour ce profil.</div>
+                    ) : jours.map((jour, i) => (
+                      <div key={i} style={{ marginBottom:14, background:"rgba(255,255,255,0.04)", border:`1px solid ${prof.color}22`, borderRadius:14, overflow:"hidden" }}>
+                        <div style={{ padding:"10px 16px", background:prof.color+"18", fontWeight:"bold", color:prof.color, fontSize:14 }}>{jour.jour}</div>
+                        {["petit_dejeuner","dejeuner","diner"].map(r => (
+                          <div key={r} style={{ padding:"10px 16px", borderTop:"1px solid rgba(255,255,255,0.05)", display:"flex", gap:10 }}>
+                            <span style={{ fontSize:16, flexShrink:0 }}>{REPAS_ICONS[r]}</span>
+                            <div>
+                              <div style={{ fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>{REPAS_LABELS[r]}</div>
+                              <div style={{ fontSize:13, color:"#ddd" }}>{jour[r]}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    ))}
+                  </div>
+                ))
+              )}
+              {!loadingMenus && menus && !isComplete && Array.isArray(menus) && menus.map((jour,i) => (
                 <div key={i} style={{ marginBottom:14, background:"rgba(255,255,255,0.04)", border:`1px solid ${profile.color}22`, borderRadius:14, overflow:"hidden" }}>
                   <div style={{ padding:"10px 16px", background:profile.color+"18", fontWeight:"bold", color:profile.color, fontSize:14 }}>{jour.jour}</div>
                   {["petit_dejeuner","dejeuner","diner"].map(r => (
@@ -366,15 +572,20 @@ export default function App() {
             </div>
           )}
 
-          {(isComplete || tab==="courses") && (
+          {tab==="courses" && (
             <div style={{ padding:"16px 20px" }}>
               {loadingCourses && <div style={{ textAlign:"center", padding:"50px 0", color:"#888" }}>⏳ {isComplete ? "Fusion des 3 listes..." : "Génération de la liste..."}</div>}
               {errorCourses && <div style={{ padding:16, background:"#FF5722", borderRadius:12, textAlign:"center" }}>{errorCourses}</div>}
               {!loadingCourses && courses && courses.length>0 && (
                 <>
-                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, gap:10 }}>
-                    <div style={{ fontSize:13, color:"#aaa" }}>
-                      💰 Total estimé : <span style={{ color:profile.color, fontWeight:"bold" }}>~{computeTotal(courses).toFixed(2)}€</span>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"flex-start", marginBottom:12, gap:10 }}>
+                    <div>
+                      <div style={{ fontSize:13, color:"#aaa" }}>
+                        💰 Total estimé : <span style={{ color:profile.color, fontWeight:"bold" }}>~{computeTotal(courses).toFixed(2)}€</span>
+                      </div>
+                      {coursesGeneratedAt && (
+                        <div style={{ fontSize:11, color:"#666", marginTop:3 }}>📅 Générée {formatRelative(coursesGeneratedAt)}</div>
+                      )}
                     </div>
                     <button onClick={refreshPrices} disabled={loadingPrices}
                       style={{ background:profile.color+"22", color:profile.color, border:`1px solid ${profile.color}44`, borderRadius:20, padding:"5px 12px", fontSize:12, cursor:loadingPrices?"wait":"pointer", opacity:loadingPrices?0.6:1, whiteSpace:"nowrap" }}>
@@ -403,6 +614,7 @@ export default function App() {
 
                   {isComplete && groupedByMag ? (
                     Object.entries(groupedByMag).map(([mag, items]) => {
+                      const sorted = sortByChecked(items);
                       const checkedCount = items.filter(it => it.checked).length;
                       return (
                         <div key={mag} style={{ marginBottom:18 }}>
@@ -411,12 +623,53 @@ export default function App() {
                             <span style={{ fontWeight:"bold", color:profile.color, fontSize:14 }}>{mag}</span>
                             <span style={{ fontSize:11, color:"#666", marginLeft:"auto" }}>{checkedCount}/{items.length}</span>
                           </div>
-                          {items.map(item => renderItem(item))}
+                          {sorted.map(item => renderItem(item))}
                         </div>
                       );
                     })
                   ) : (
                     filteredCourses.map(item => renderItem(item))
+                  )}
+
+                  {/* Add manual item */}
+                  {!showAddForm ? (
+                    <button onClick={()=>setShowAddForm(true)}
+                      style={{ width:"100%", marginTop:8, padding:"12px", background:"transparent", border:`1px dashed ${profile.color}55`, borderRadius:12, color:profile.color, fontSize:13, cursor:"pointer" }}>
+                      + Ajouter un article
+                    </button>
+                  ) : (
+                    <div style={{ marginTop:12, padding:14, background:"rgba(255,255,255,0.04)", border:`1px solid ${profile.color}44`, borderRadius:12 }}>
+                      <input type="text" placeholder="Produit (ex: Pommes)" value={newItem.produit}
+                        onChange={e=>setNewItem({...newItem, produit:e.target.value})}
+                        style={{ width:"100%", padding:"10px 12px", background:"rgba(0,0,0,0.3)", border:"1px solid #333", borderRadius:8, color:"#f0f0f0", fontSize:14, marginBottom:8, boxSizing:"border-box" }}
+                      />
+                      <div style={{ display:"flex", gap:8, marginBottom:8 }}>
+                        <input type="text" placeholder="Quantité (1kg)" value={newItem.quantite}
+                          onChange={e=>setNewItem({...newItem, quantite:e.target.value})}
+                          style={{ flex:1, padding:"10px 12px", background:"rgba(0,0,0,0.3)", border:"1px solid #333", borderRadius:8, color:"#f0f0f0", fontSize:14, minWidth:0, boxSizing:"border-box" }}
+                        />
+                        <select value={newItem.magasin}
+                          onChange={e=>setNewItem({...newItem, magasin:e.target.value})}
+                          style={{ flex:1, padding:"10px 12px", background:"rgba(0,0,0,0.3)", border:"1px solid #333", borderRadius:8, color:"#f0f0f0", fontSize:14, minWidth:0 }}>
+                          {[...new Set([...MAGASINS_DEFAULT, ...(mags.filter(m=>m!=="Tous"))])].map(m => <option key={m} value={m}>{m}</option>)}
+                        </select>
+                      </div>
+                      <select value={newItem.categorie}
+                        onChange={e=>setNewItem({...newItem, categorie:e.target.value})}
+                        style={{ width:"100%", padding:"10px 12px", background:"rgba(0,0,0,0.3)", border:"1px solid #333", borderRadius:8, color:"#f0f0f0", fontSize:14, marginBottom:10, boxSizing:"border-box" }}>
+                        {[...new Set([...CATEGORIES_DEFAULT, ...(cats.filter(c=>c!=="Toutes"))])].map(c => <option key={c} value={c}>{c}</option>)}
+                      </select>
+                      <div style={{ display:"flex", gap:8 }}>
+                        <button onClick={()=>{ setShowAddForm(false); setNewItem({ produit:"", quantite:"", magasin:newItem.magasin, categorie:newItem.categorie }); }}
+                          style={{ flex:1, padding:"10px", background:"transparent", border:"1px solid #444", borderRadius:8, color:"#888", fontSize:13, cursor:"pointer" }}>
+                          Annuler
+                        </button>
+                        <button onClick={addItem} disabled={!newItem.produit.trim()}
+                          style={{ flex:1, padding:"10px", background:profile.color, border:"none", borderRadius:8, color:"#000", fontSize:13, fontWeight:"bold", cursor: newItem.produit.trim() ? "pointer" : "not-allowed", opacity: newItem.produit.trim() ? 1 : 0.5 }}>
+                          Ajouter
+                        </button>
+                      </div>
+                    </div>
                   )}
                 </>
               )}
