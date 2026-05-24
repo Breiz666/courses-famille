@@ -3,12 +3,12 @@ import { useState } from "react";
 
 const PROFILES = {
   renald: {
-    id: "renald", name: "Rénald", emoji: "👨", color: "#00C9A7", regime: "Diabétique type 2",
+    id: "renald", name: "Rénald", emoji: "👨", color: "#3B82F6", regime: "Diabétique type 2",
     menuPrompt: `Tu es nutritionniste expert diabète type 2. Génère un plan de menus pour 7 jours pour UN adulte diabétique type 2. Règles : index glycémique bas (<55), pas de sucres raffinés, pas de pain blanc, pas de riz blanc, riche en fibres et protéines maigres. Réponds UNIQUEMENT en JSON valide, sans texte avant ou après, sans balises markdown : {"jours":[{"jour":"Lundi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Mardi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Mercredi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Jeudi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Vendredi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Samedi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Dimanche","petit_dejeuner":"...","dejeuner":"...","diner":"..."}]}`,
     coursesPrompt: `Liste de courses 1 semaine, 1 adulte diabétique type 2 (IG bas, fibres, protéines maigres, légumes verts). Maximum 20 produits. JSON UNIQUEMENT, sans markdown : {"liste":[{"produit":"...","quantite":"...","categorie":"...","magasin":"...","prix":"...€"}]}. Catégories: Légumes, Protéines, Féculents, Produits laitiers, Fruits, Épicerie. Magasins: Lidl, Aldi, Carrefour.`
   },
   gwenaelle: {
-    id: "gwenaelle", name: "Gwénaëlle", emoji: "👩", color: "#FF6B9D", regime: "Hypocalorique",
+    id: "gwenaelle", name: "Gwénaëlle", emoji: "👩", color: "#A855F7", regime: "Hypocalorique",
     menuPrompt: `Tu es nutritionniste expert régimes hypocaloriques. Génère un plan de menus pour 7 jours pour une adulte en régime hypocalorique (max 1400 kcal/jour). Règles : haute satiété, faible densité énergétique, légumes, protéines maigres, peu de graisses saturées. Réponds UNIQUEMENT en JSON valide, sans texte avant ou après, sans balises markdown : {"jours":[{"jour":"Lundi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Mardi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Mercredi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Jeudi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Vendredi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Samedi","petit_dejeuner":"...","dejeuner":"...","diner":"..."},{"jour":"Dimanche","petit_dejeuner":"...","dejeuner":"...","diner":"..."}]}`,
     coursesPrompt: `Liste de courses 1 semaine, 1 adulte régime hypocalorique 1400 kcal/jour (satiété, légumes, protéines maigres). Maximum 20 produits. JSON UNIQUEMENT, sans markdown : {"liste":[{"produit":"...","quantite":"...","categorie":"...","magasin":"...","prix":"...€"}]}. Catégories: Légumes, Protéines, Féculents, Produits laitiers, Fruits, Épicerie. Magasins: Lidl, Aldi, Carrefour.`
   },
@@ -23,7 +23,7 @@ const COMPLETE_PROFILE = {
   id: "complete",
   name: "Liste complète",
   emoji: "🛒",
-  color: "#9B59B6",
+  color: "#22C55E",
   regime: "Rénald + Gwénaëlle + Enfants — fusionnée par magasin"
 };
 
