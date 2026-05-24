@@ -343,13 +343,22 @@ export default function App() {
     setErrorCourses(null);
     try {
       const items = courses.map(it => ({ produit: it.produit, quantite: it.quantite }));
-      const prompt = `Pour chaque produit ci-dessous, utilise web_search pour comparer les prix actuels entre les 3 magasins français suivants : Lidl (lidl.fr ou catalogues hebdo Lidl), Leclerc Drive (leclercdrive.fr), Super U / Courses U (coursesu.com). Fais au moins UNE recherche par magasin et par produit (3 recherches × N produits). Pour chaque produit, choisis le magasin avec le prix le plus bas parmi les 3. Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"produit":"nom exact","magasin":"Lidl" ou "Leclerc" ou "Super U","prix":"X.XX€"}]}. Garde le même nom de produit pour chaque entrée. Si tu ne trouves pas un prix précis pour un magasin, donne ta meilleure estimation basée sur le marché français mais essaie d'abord vraiment de chercher. Produits à optimiser : ${JSON.stringify(items)}`;
+      const prompt = `Pour chaque produit ci-dessous, utilise web_search pour comparer les prix actuels entre les 3 magasins français suivants : Lidl (lidl.fr ou catalogues hebdo Lidl), Leclerc Drive (leclercdrive.fr), Super U / Courses U (coursesu.com). Fais au moins UNE recherche par magasin et par produit. Pour CHAQUE produit, retourne :
+- "magasin" : le magasin parmi les 3 avec le prix le plus bas
+- "prix" : le prix le plus bas (chez le magasin choisi)
+- "prix_alternatives" : un objet contenant les 3 prix sous la forme {"Lidl":"X.XX€","Leclerc":"X.XX€","Super U":"X.XX€"}
+Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"produit":"nom exact","magasin":"Lidl|Leclerc|Super U","prix":"X.XX€","prix_alternatives":{"Lidl":"X.XX€","Leclerc":"X.XX€","Super U":"X.XX€"}}]}. Garde le même nom de produit pour chaque entrée. Si tu ne trouves pas un prix précis pour un magasin, donne ta meilleure estimation basée sur le marché français mais essaie d'abord vraiment de chercher. Produits à optimiser : ${JSON.stringify(items)}`;
       const d = await callClaude(prompt, { webSearch: true, maxWebSearches: 75 });
       const optimized = d.liste || [];
       const updated = courses.map(it => {
         const op = optimized.find(o => o.produit === it.produit);
         if (op && op.magasin && op.prix) {
-          return { ...it, magasin: op.magasin, prix: op.prix };
+          return {
+            ...it,
+            magasin: op.magasin,
+            prix: op.prix,
+            prixAlternatives: op.prix_alternatives || null
+          };
         }
         return it;
       });
@@ -800,6 +809,48 @@ export default function App() {
                       🎯 Comparaison Lidl / Leclerc / Super U pour chaque produit... (3-5 min)
                     </div>
                   )}
+                  {(() => {
+                    const withAlts = courses.filter(it => it.prixAlternatives);
+                    if (withAlts.length === 0) return null;
+                    const totalAt = (mag) => courses.reduce((sum, it) => {
+                      const p = it.prixAlternatives && it.prixAlternatives[mag];
+                      return sum + parsePrice(p || it.prix);
+                    }, 0);
+                    const tLidl = totalAt("Lidl");
+                    const tLeclerc = totalAt("Leclerc");
+                    const tSuperU = totalAt("Super U");
+                    const tOpti = computeTotal(courses);
+                    const cheapestSingle = Math.min(tLeclerc, tSuperU);
+                    const savings = cheapestSingle - tOpti;
+                    return (
+                      <div style={{ marginBottom:14, padding:"12px 14px", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:12 }}>
+                        <div style={{ fontSize:11, color:"#888", textTransform:"uppercase", letterSpacing:1, marginBottom:10 }}>💡 Comparaison stratégies</div>
+                        <div style={{ display:"flex", flexDirection:"column", gap:7, fontSize:13 }}>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                            <span style={{ color:"#FFB347" }}>Tout chez Lidl <span style={{ fontSize:10, color:"#888" }}>⚠️ magasin</span></span>
+                            <span style={{ fontWeight:"bold" }}>~{tLidl.toFixed(2)}€</span>
+                          </div>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                            <span style={{ color:"#ddd" }}>Tout chez Leclerc <span style={{ fontSize:10, color:"#888" }}>📦 livraison</span></span>
+                            <span style={{ fontWeight:"bold" }}>~{tLeclerc.toFixed(2)}€</span>
+                          </div>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center" }}>
+                            <span style={{ color:"#ddd" }}>Tout chez Super U <span style={{ fontSize:10, color:"#888" }}>📦 livraison</span></span>
+                            <span style={{ fontWeight:"bold" }}>~{tSuperU.toFixed(2)}€</span>
+                          </div>
+                          <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", borderTop:"1px solid rgba(255,255,255,0.1)", paddingTop:7, marginTop:2 }}>
+                            <span style={{ color:profile.color, fontWeight:"bold" }}>🎯 Optimisé 3 mag.</span>
+                            <span style={{ color:profile.color, fontWeight:"bold" }}>~{tOpti.toFixed(2)}€ <span style={{ fontSize:10, fontWeight:"normal", color:"#888" }}>(2 livraisons)</span></span>
+                          </div>
+                        </div>
+                        {savings > 0 && (
+                          <div style={{ marginTop:10, padding:"6px 10px", background:profile.color+"15", borderRadius:8, fontSize:11, color:"#bbb" }}>
+                            💰 Gain optimisation : <strong style={{ color:profile.color }}>~{savings.toFixed(2)}€</strong> vs meilleur single-magasin. Rentable si &gt; frais 2e livraison (~5-10€).
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
                     {Object.entries(byMag).map(([m,c])=>(
                       <div key={m} style={{ background:"rgba(255,255,255,0.06)", borderRadius:20, padding:"5px 12px", fontSize:12, display:"flex", gap:6, alignItems:"center" }}>
