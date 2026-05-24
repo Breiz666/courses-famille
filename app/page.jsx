@@ -57,7 +57,8 @@ async function callClaude(prompt, opts = {}) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       messages: [{ role: "user", content: prompt }],
-      web_search: !!opts.webSearch
+      web_search: !!opts.webSearch,
+      max_web_searches: opts.maxWebSearches
     })
   });
   const data = await res.json();
@@ -159,6 +160,8 @@ export default function App() {
   const [shareNotice, setShareNotice] = useState(null);
   const [templates, setTemplates] = useState([]);
   const [showConcentrateMenu, setShowConcentrateMenu] = useState(false);
+  const [switchLidlIdx, setSwitchLidlIdx] = useState(null);
+  const [loadingOptimize, setLoadingOptimize] = useState(false);
   // tick for relative time refresh
   const [, setTick] = useState(0);
 
@@ -312,6 +315,48 @@ export default function App() {
     const updated = courses.filter((_, i) => i !== idx);
     setCourses(updated);
     saveLS(`${LS_PREFIX}-${profile.id}-courses`, updated);
+  };
+
+  const switchItemMagasin = (idx, magasin) => {
+    if (!courses || !profile) return;
+    const updated = courses.map((it, i) => i === idx ? { ...it, magasin, prix: "" } : it);
+    setCourses(updated);
+    saveLS(`${LS_PREFIX}-${profile.id}-courses`, updated);
+    setSwitchLidlIdx(null);
+    setShareNotice(`✓ Article basculé chez ${magasin}. Clique "🔍 Prix réels" pour mettre à jour le prix.`);
+    setTimeout(() => setShareNotice(null), 4000);
+  };
+
+  const optimizePrices = async () => {
+    if (!courses || courses.length === 0 || !profile) return;
+    if (!confirm("🎯 Optimiser les prix en comparant Leclerc Drive vs Super U pour chaque produit ?\n\nDurée : 2-4 min. Lidl est exclu (ne livre pas l'alimentaire en France). Chaque produit sera réassigné au magasin le moins cher.")) return;
+    setLoadingOptimize(true);
+    setErrorCourses(null);
+    try {
+      const items = courses.map(it => ({ produit: it.produit, quantite: it.quantite }));
+      const prompt = `Pour chaque produit ci-dessous, utilise web_search pour comparer les prix actuels entre Leclerc Drive (leclercdrive.fr) et Super U / Courses U (coursesu.com). Fais au moins UNE recherche par magasin et par produit. Choisis le magasin le moins cher pour chacun. N'utilise PAS Lidl (qui ne livre pas l'alimentaire en France, donc inadapté à la livraison). Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"produit":"nom exact","magasin":"Leclerc" ou "Super U","prix":"X.XX€"}]}. Garde le même nom de produit pour chaque entrée. Si tu ne trouves pas un prix précis pour un magasin, donne ta meilleure estimation basée sur le marché français mais essaie d'abord vraiment de chercher. Produits à optimiser : ${JSON.stringify(items)}`;
+      const d = await callClaude(prompt, { webSearch: true, maxWebSearches: 60 });
+      const optimized = d.liste || [];
+      const updated = courses.map(it => {
+        const op = optimized.find(o => o.produit === it.produit);
+        if (op && op.magasin && op.prix) {
+          return { ...it, magasin: op.magasin, prix: op.prix };
+        }
+        return it;
+      });
+      setCourses(updated);
+      saveLS(`${LS_PREFIX}-${profile.id}-courses`, updated);
+      const updatedCount = updated.filter(it => {
+        const orig = courses.find(c => c.produit === it.produit);
+        return orig && (orig.magasin !== it.magasin || orig.prix !== it.prix);
+      }).length;
+      setShareNotice(`✓ Optimisation terminée. ${updatedCount} articles mis à jour.`);
+      setTimeout(() => setShareNotice(null), 4000);
+    } catch {
+      setErrorCourses("Erreur optimisation prix. Réessaie.");
+    } finally {
+      setLoadingOptimize(false);
+    }
   };
 
   const concentrateMagasin = async (magasin) => {
@@ -509,16 +554,26 @@ export default function App() {
           </div>
         </div>
         <div style={{ textAlign:"right", flexShrink:0, display:"flex", flexDirection:"column", alignItems:"flex-end", gap:3 }}>
-          <a
-            href={driveURL(item.magasin, item.produit)}
-            target="_blank"
-            rel="noopener noreferrer"
-            onClick={(e) => e.stopPropagation()}
-            title={`Ouvrir "${item.produit}" sur ${item.magasin}`}
-            style={{ fontSize:11, fontWeight:"bold", background:"rgba(255,255,255,0.1)", borderRadius:8, padding:"3px 8px", color:"#fff", textDecoration:"none", display:"inline-flex", alignItems:"center", gap:4 }}
-          >
-            {item.magasin}<span style={{ fontSize:9, opacity:0.7 }}>↗</span>
-          </a>
+          {(item.magasin || "").toLowerCase().includes("lidl") ? (
+            <button
+              onClick={(e) => { e.stopPropagation(); setSwitchLidlIdx(item._idx); }}
+              title="Lidl ne livre pas en France — clique pour basculer"
+              style={{ fontSize:11, fontWeight:"bold", background:"rgba(255,180,0,0.15)", border:"1px solid rgba(255,180,0,0.4)", borderRadius:8, padding:"3px 8px", color:"#FFB347", cursor:"pointer", display:"inline-flex", alignItems:"center", gap:4, lineHeight:1 }}
+            >
+              {item.magasin}<span style={{ fontSize:9 }}>⚠️</span>
+            </button>
+          ) : (
+            <a
+              href={driveURL(item.magasin, item.produit)}
+              target="_blank"
+              rel="noopener noreferrer"
+              onClick={(e) => e.stopPropagation()}
+              title={`Ouvrir "${item.produit}" sur ${item.magasin}`}
+              style={{ fontSize:11, fontWeight:"bold", background:"rgba(255,255,255,0.1)", borderRadius:8, padding:"3px 8px", color:"#fff", textDecoration:"none", display:"inline-flex", alignItems:"center", gap:4 }}
+            >
+              {item.magasin}<span style={{ fontSize:9, opacity:0.7 }}>↗</span>
+            </a>
+          )}
           {item.prix && <div style={{ fontSize:11, color:accent }}>~{item.prix}</div>}
         </div>
         <button
@@ -709,14 +764,25 @@ export default function App() {
                         <div style={{ fontSize:11, color:"#666", marginTop:3 }}>📅 Générée {formatRelative(coursesGeneratedAt)}</div>
                       )}
                     </div>
-                    <button onClick={refreshPrices} disabled={loadingPrices}
-                      style={{ background:profile.color+"22", color:profile.color, border:`1px solid ${profile.color}44`, borderRadius:20, padding:"5px 12px", fontSize:12, cursor:loadingPrices?"wait":"pointer", opacity:loadingPrices?0.6:1, whiteSpace:"nowrap" }}>
-                      {loadingPrices ? "⏳ Recherche..." : "🔍 Prix réels"}
-                    </button>
+                    <div style={{ display:"flex", flexDirection:"column", gap:6 }}>
+                      <button onClick={refreshPrices} disabled={loadingPrices || loadingOptimize}
+                        style={{ background:profile.color+"22", color:profile.color, border:`1px solid ${profile.color}44`, borderRadius:20, padding:"5px 12px", fontSize:12, cursor:(loadingPrices||loadingOptimize)?"wait":"pointer", opacity:(loadingPrices||loadingOptimize)?0.6:1, whiteSpace:"nowrap" }}>
+                        {loadingPrices ? "⏳ Recherche..." : "🔍 Prix réels"}
+                      </button>
+                      <button onClick={optimizePrices} disabled={loadingPrices || loadingOptimize}
+                        style={{ background:"transparent", color:profile.color, border:`1px dashed ${profile.color}66`, borderRadius:20, padding:"5px 12px", fontSize:12, cursor:(loadingPrices||loadingOptimize)?"wait":"pointer", opacity:(loadingPrices||loadingOptimize)?0.6:1, whiteSpace:"nowrap" }}>
+                        {loadingOptimize ? "⏳ Optim..." : "🎯 Optimiser"}
+                      </button>
+                    </div>
                   </div>
                   {loadingPrices && (
                     <div style={{ padding:"10px 14px", marginBottom:12, background:profile.color+"15", border:`1px solid ${profile.color}33`, borderRadius:10, fontSize:12, color:"#ccc" }}>
                       🔍 Recherche des prix actuels sur le web... (1-2 min, prix mis à jour à la fin)
+                    </div>
+                  )}
+                  {loadingOptimize && (
+                    <div style={{ padding:"10px 14px", marginBottom:12, background:profile.color+"15", border:`1px solid ${profile.color}33`, borderRadius:10, fontSize:12, color:"#ccc" }}>
+                      🎯 Comparaison Leclerc vs Super U pour chaque produit... (2-4 min). Lidl exclu (pas de livraison).
                     </div>
                   )}
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
@@ -813,6 +879,35 @@ export default function App() {
               )}
             </div>
           )}
+        </div>
+      )}
+
+      {switchLidlIdx !== null && courses && courses[switchLidlIdx] && (
+        <div onClick={() => setSwitchLidlIdx(null)}
+          style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.75)", display:"flex", alignItems:"center", justifyContent:"center", zIndex:100, padding:20 }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ background:"#1a1a2e", borderRadius:18, padding:24, maxWidth:380, width:"100%", border:"1px solid rgba(255,180,0,0.4)", boxShadow:"0 20px 60px rgba(0,0,0,0.5)" }}>
+            <div style={{ fontSize:24, marginBottom:10 }}>⚠️</div>
+            <div style={{ fontSize:16, fontWeight:"bold", marginBottom:10, color:"#FFB347" }}>Lidl ne livre pas en France</div>
+            <div style={{ fontSize:13, color:"#ccc", marginBottom:18, lineHeight:1.5 }}>
+              <strong>{courses[switchLidlIdx].produit}</strong> est assigné à Lidl, mais Lidl ne propose pas de livraison alimentaire à domicile en France (uniquement non-alimentaire).<br/><br/>
+              Bascule cet article vers un magasin qui livre :
+            </div>
+            <div style={{ display:"flex", flexDirection:"column", gap:8 }}>
+              <button onClick={() => switchItemMagasin(switchLidlIdx, "Leclerc")}
+                style={{ padding:"12px", background:"#22C55E22", border:"1px solid #22C55E55", borderRadius:10, color:"#22C55E", fontSize:14, fontWeight:"bold", cursor:"pointer" }}>
+                🛒 Basculer vers Leclerc
+              </button>
+              <button onClick={() => switchItemMagasin(switchLidlIdx, "Super U")}
+                style={{ padding:"12px", background:"#22C55E22", border:"1px solid #22C55E55", borderRadius:10, color:"#22C55E", fontSize:14, fontWeight:"bold", cursor:"pointer" }}>
+                🛒 Basculer vers Super U
+              </button>
+              <button onClick={() => setSwitchLidlIdx(null)}
+                style={{ padding:"10px", marginTop:4, background:"transparent", border:"1px solid #444", borderRadius:10, color:"#888", fontSize:13, cursor:"pointer" }}>
+                Annuler
+              </button>
+            </div>
+          </div>
         </div>
       )}
     </div>
