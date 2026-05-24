@@ -454,7 +454,7 @@ export default function App() {
     <div style={{ minHeight:"100vh", background:"linear-gradient(135deg,#0f0f1a 0%,#1a1a2e 50%,#0f0f1a 100%)", fontFamily:"Georgia,serif", color:"#f0f0f0" }}>
 
       {screen==="home" && (
-        <div style={{ padding:"40px 20px", maxWidth:480, margin:"0 auto" }}>
+        <div style={{ padding:"calc(env(safe-area-inset-top, 0px) + 30px) 20px calc(env(safe-area-inset-bottom, 0px) + 20px)", maxWidth:480, margin:"0 auto" }}>
           <div style={{ textAlign:"center", marginBottom:40 }}>
             <div style={{ fontSize:48, marginBottom:8 }}>🛒</div>
             <h1 style={{ fontSize:26, fontWeight:"bold", margin:0, background:"linear-gradient(90deg,#3B82F6,#A855F7)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
@@ -498,8 +498,8 @@ export default function App() {
       )}
 
       {screen==="detail" && profile && (
-        <div style={{ maxWidth:500, margin:"0 auto", paddingBottom:40 }}>
-          <div style={{ padding:"20px 20px 0", position:"sticky", top:0, background:"linear-gradient(135deg,#0f0f1a,#1a1a2e)", zIndex:10 }}>
+        <div style={{ maxWidth:500, margin:"0 auto", paddingBottom:"calc(env(safe-area-inset-bottom, 0px) + 40px)" }}>
+          <div style={{ padding:"calc(env(safe-area-inset-top, 0px) + 16px) 20px 0", position:"sticky", top:0, background:"linear-gradient(135deg,#0f0f1a,#1a1a2e)", zIndex:10 }}>
             <div style={{ display:"flex", alignItems:"center", gap:10, marginBottom:16 }}>
               <button onClick={()=>setScreen("home")} style={{ background:"none", border:"none", color:"#888", cursor:"pointer", fontSize:22, padding:0 }}>←</button>
               <span style={{ fontSize:26 }}>{profile.emoji}</span>
