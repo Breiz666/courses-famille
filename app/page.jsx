@@ -96,14 +96,18 @@ const formatRelative = (ts) => {
 
 const sortByChecked = (arr) => [...arr].sort((a, b) => (a.checked ? 1 : 0) - (b.checked ? 1 : 0));
 
-// Build a Drive search URL for a given store + product
+// Build a Google site-search URL for a given store + product
+// Note: tested Lidl/Leclerc/Coursesu direct search URLs all failed or were
+// unverifiable (403 bot blocking). Google site search is the only reliable
+// option that always works — costs 1 extra click but lands on the right product.
 const driveURL = (magasin, produit) => {
-  const q = encodeURIComponent(produit || "");
   const m = (magasin || "").toLowerCase();
-  if (m.includes("lidl")) return `https://www.lidl.fr/q/query/${q}`;
-  if (m.includes("leclerc")) return `https://www.leclercdrive.fr/recherche-globale?q=${q}`;
-  if (m.includes("super u") || m === "u" || m.includes("coursesu")) return `https://www.coursesu.com/rechercher?q=${q}`;
-  return `https://www.google.com/search?q=${q}+${encodeURIComponent(magasin || "")}`;
+  let site = "";
+  if (m.includes("lidl")) site = "lidl.fr";
+  else if (m.includes("leclerc")) site = "leclercdrive.fr";
+  else if (m.includes("super u") || m === "u" || m.includes("coursesu")) site = "coursesu.com";
+  const query = site ? `site:${site} ${produit || ""}` : `${produit || ""} ${magasin || ""}`;
+  return `https://www.google.com/search?q=${encodeURIComponent(query.trim())}`;
 };
 
 // Merge duplicate products across the 3 profiles' lists into single rows
