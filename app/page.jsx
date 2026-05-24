@@ -329,13 +329,13 @@ export default function App() {
 
   const optimizePrices = async () => {
     if (!courses || courses.length === 0 || !profile) return;
-    if (!confirm("🎯 Optimiser les prix en comparant Leclerc Drive vs Super U pour chaque produit ?\n\nDurée : 2-4 min. Lidl est exclu (ne livre pas l'alimentaire en France). Chaque produit sera réassigné au magasin le moins cher.")) return;
+    if (!confirm("🎯 Optimiser les prix en comparant Lidl, Leclerc Drive et Super U pour chaque produit ?\n\nDurée : 3-5 min. Chaque produit sera réassigné au magasin le moins cher des 3.\n\nRappel : Lidl ne livre pas l'alimentaire (mais peut être moins cher en magasin).")) return;
     setLoadingOptimize(true);
     setErrorCourses(null);
     try {
       const items = courses.map(it => ({ produit: it.produit, quantite: it.quantite }));
-      const prompt = `Pour chaque produit ci-dessous, utilise web_search pour comparer les prix actuels entre Leclerc Drive (leclercdrive.fr) et Super U / Courses U (coursesu.com). Fais au moins UNE recherche par magasin et par produit. Choisis le magasin le moins cher pour chacun. N'utilise PAS Lidl (qui ne livre pas l'alimentaire en France, donc inadapté à la livraison). Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"produit":"nom exact","magasin":"Leclerc" ou "Super U","prix":"X.XX€"}]}. Garde le même nom de produit pour chaque entrée. Si tu ne trouves pas un prix précis pour un magasin, donne ta meilleure estimation basée sur le marché français mais essaie d'abord vraiment de chercher. Produits à optimiser : ${JSON.stringify(items)}`;
-      const d = await callClaude(prompt, { webSearch: true, maxWebSearches: 60 });
+      const prompt = `Pour chaque produit ci-dessous, utilise web_search pour comparer les prix actuels entre les 3 magasins français suivants : Lidl (lidl.fr ou catalogues hebdo Lidl), Leclerc Drive (leclercdrive.fr), Super U / Courses U (coursesu.com). Fais au moins UNE recherche par magasin et par produit (3 recherches × N produits). Pour chaque produit, choisis le magasin avec le prix le plus bas parmi les 3. Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"produit":"nom exact","magasin":"Lidl" ou "Leclerc" ou "Super U","prix":"X.XX€"}]}. Garde le même nom de produit pour chaque entrée. Si tu ne trouves pas un prix précis pour un magasin, donne ta meilleure estimation basée sur le marché français mais essaie d'abord vraiment de chercher. Produits à optimiser : ${JSON.stringify(items)}`;
+      const d = await callClaude(prompt, { webSearch: true, maxWebSearches: 75 });
       const optimized = d.liste || [];
       const updated = courses.map(it => {
         const op = optimized.find(o => o.produit === it.produit);
@@ -782,7 +782,7 @@ export default function App() {
                   )}
                   {loadingOptimize && (
                     <div style={{ padding:"10px 14px", marginBottom:12, background:profile.color+"15", border:`1px solid ${profile.color}33`, borderRadius:10, fontSize:12, color:"#ccc" }}>
-                      🎯 Comparaison Leclerc vs Super U pour chaque produit... (2-4 min). Lidl exclu (pas de livraison).
+                      🎯 Comparaison Lidl / Leclerc / Super U pour chaque produit... (3-5 min)
                     </div>
                   )}
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:10 }}>
