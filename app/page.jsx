@@ -1,5 +1,5 @@
 "use client";
-import { useState } from "react";
+import { useState, useEffect } from "react";
 
 const PROFILES = {
   renald: {
@@ -48,17 +48,35 @@ const saveLS = (key, val) => {
   try { localStorage.setItem(key, JSON.stringify(val)); } catch {}
 };
 
-async function callClaude(prompt) {
+async function callClaude(prompt, opts = {}) {
   const res = await fetch("/api/claude", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ messages: [{ role: "user", content: prompt }] })
+    body: JSON.stringify({
+      messages: [{ role: "user", content: prompt }],
+      web_search: !!opts.webSearch
+    })
   });
   const data = await res.json();
-  const text = data.content?.map(b => b.text || "").join("") || "";
+  const text = (data.content || [])
+    .filter(b => b.type === "text")
+    .map(b => b.text || "")
+    .join("");
   const clean = text.replace(/```json|```/g, "").trim();
-  return JSON.parse(clean);
+  const first = clean.indexOf("{");
+  const last = clean.lastIndexOf("}");
+  if (first === -1 || last === -1) throw new Error("No JSON in response");
+  return JSON.parse(clean.substring(first, last + 1));
 }
+
+const parsePrice = (s) => {
+  if (!s) return 0;
+  const m = String(s).match(/(\d+[.,]?\d*)/);
+  if (!m) return 0;
+  return parseFloat(m[0].replace(",", ".")) || 0;
+};
+
+const computeTotal = (items) => (items || []).reduce((a, i) => a + parsePrice(i.prix), 0);
 
 export default function App() {
   const [screen, setScreen] = useState("home");
@@ -72,8 +90,21 @@ export default function App() {
   const [errorCourses, setErrorCourses] = useState(null);
   const [filterCat, setFilterCat] = useState("Toutes");
   const [filterMag, setFilterMag] = useState("Tous");
+  const [loadingPrices, setLoadingPrices] = useState(false);
+  const [totals, setTotals] = useState({ renald: 0, gwenaelle: 0, famille: 0, complete: 0 });
 
   const isComplete = profile?.id === "complete";
+
+  useEffect(() => {
+    if (screen !== "home") return;
+    const ids = ["renald", "gwenaelle", "famille", "complete"];
+    const t = {};
+    ids.forEach(id => {
+      const items = loadLS(`${LS_PREFIX}-${id}-courses`);
+      t[id] = computeTotal(items);
+    });
+    setTotals(t);
+  }, [screen]);
 
   const openProfile = (p) => {
     setProfile(p);
@@ -135,6 +166,32 @@ export default function App() {
       setErrorCourses("Erreur courses. Réessaie.");
     } finally {
       setLoadingCourses(false);
+    }
+  };
+
+  const refreshPrices = async () => {
+    if (!courses || courses.length === 0 || !profile) return;
+    setLoadingPrices(true);
+    setErrorCourses(null);
+    try {
+      const itemsForPrompt = courses.map(it => ({
+        produit: it.produit,
+        quantite: it.quantite,
+        magasin: it.magasin
+      }));
+      const prompt = `Pour chaque produit ci-dessous, utilise le web search pour trouver le prix actuel réel en France chez le magasin indiqué (privilégie les sites Drive officiels : leclercdrive.fr, drive.coursesu.com, lidl.fr). Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"produit":"nom exact","prix":"X.XX€"}]}. Garde le même nom de produit pour chaque entrée. Si tu ne trouves pas un prix précis, donne ta meilleure estimation basée sur le marché français. Produits à rechercher : ${JSON.stringify(itemsForPrompt)}`;
+      const d = await callClaude(prompt, { webSearch: true });
+      const newPrices = d.liste || [];
+      const updated = courses.map(it => {
+        const np = newPrices.find(p => p.produit === it.produit);
+        return np && np.prix ? { ...it, prix: np.prix } : it;
+      });
+      setCourses(updated);
+      saveLS(`${LS_PREFIX}-${profile.id}-courses`, updated);
+    } catch {
+      setErrorCourses("Erreur recherche prix. Réessaie.");
+    } finally {
+      setLoadingPrices(false);
     }
   };
 
@@ -235,11 +292,14 @@ export default function App() {
             <button key={p.id} onClick={()=>openProfile(p)}
               style={{ width:"100%", marginBottom:16, padding:"20px 24px", background:"rgba(255,255,255,0.04)", border:`1px solid ${p.color}44`, borderLeft:`4px solid ${p.color}`, borderRadius:16, cursor:"pointer", textAlign:"left", color:"#f0f0f0", display:"flex", alignItems:"center", gap:16 }}>
               <span style={{ fontSize:32 }}>{p.emoji}</span>
-              <div>
+              <div style={{ flex:1, minWidth:0 }}>
                 <div style={{ fontWeight:"bold", fontSize:16, color:p.color }}>{p.name}</div>
                 <div style={{ fontSize:12, color:"#888", marginTop:3 }}>{p.regime}</div>
+                {totals[p.id] > 0 && (
+                  <div style={{ fontSize:12, color:p.color, marginTop:4, fontWeight:"bold" }}>~{totals[p.id].toFixed(2)}€</div>
+                )}
               </div>
-              <span style={{ marginLeft:"auto", color:p.color, fontSize:20 }}>→</span>
+              <span style={{ color:p.color, fontSize:20 }}>→</span>
             </button>
           ))}
 
@@ -250,11 +310,14 @@ export default function App() {
           <button key={COMPLETE_PROFILE.id} onClick={()=>openProfile(COMPLETE_PROFILE)}
             style={{ width:"100%", padding:"20px 24px", background:`linear-gradient(135deg, ${COMPLETE_PROFILE.color}22 0%, rgba(255,255,255,0.04) 100%)`, border:`1px solid ${COMPLETE_PROFILE.color}66`, borderLeft:`4px solid ${COMPLETE_PROFILE.color}`, borderRadius:16, cursor:"pointer", textAlign:"left", color:"#f0f0f0", display:"flex", alignItems:"center", gap:16 }}>
             <span style={{ fontSize:32 }}>{COMPLETE_PROFILE.emoji}</span>
-            <div>
+            <div style={{ flex:1, minWidth:0 }}>
               <div style={{ fontWeight:"bold", fontSize:16, color:COMPLETE_PROFILE.color }}>{COMPLETE_PROFILE.name}</div>
               <div style={{ fontSize:12, color:"#888", marginTop:3 }}>{COMPLETE_PROFILE.regime}</div>
+              {totals.complete > 0 && (
+                <div style={{ fontSize:13, color:COMPLETE_PROFILE.color, marginTop:4, fontWeight:"bold" }}>💰 Total : ~{totals.complete.toFixed(2)}€</div>
+              )}
             </div>
-            <span style={{ marginLeft:"auto", color:COMPLETE_PROFILE.color, fontSize:20 }}>→</span>
+            <span style={{ color:COMPLETE_PROFILE.color, fontSize:20 }}>→</span>
           </button>
         </div>
       )}
@@ -309,6 +372,20 @@ export default function App() {
               {errorCourses && <div style={{ padding:16, background:"#FF5722", borderRadius:12, textAlign:"center" }}>{errorCourses}</div>}
               {!loadingCourses && courses && courses.length>0 && (
                 <>
+                  <div style={{ display:"flex", justifyContent:"space-between", alignItems:"center", marginBottom:12, gap:10 }}>
+                    <div style={{ fontSize:13, color:"#aaa" }}>
+                      💰 Total estimé : <span style={{ color:profile.color, fontWeight:"bold" }}>~{computeTotal(courses).toFixed(2)}€</span>
+                    </div>
+                    <button onClick={refreshPrices} disabled={loadingPrices}
+                      style={{ background:profile.color+"22", color:profile.color, border:`1px solid ${profile.color}44`, borderRadius:20, padding:"5px 12px", fontSize:12, cursor:loadingPrices?"wait":"pointer", opacity:loadingPrices?0.6:1, whiteSpace:"nowrap" }}>
+                      {loadingPrices ? "⏳ Recherche..." : "🔍 Prix réels"}
+                    </button>
+                  </div>
+                  {loadingPrices && (
+                    <div style={{ padding:"10px 14px", marginBottom:12, background:profile.color+"15", border:`1px solid ${profile.color}33`, borderRadius:10, fontSize:12, color:"#ccc" }}>
+                      🔍 Recherche des prix actuels sur le web... (1-2 min, prix mis à jour à la fin)
+                    </div>
+                  )}
                   <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:14 }}>
                     {Object.entries(byMag).map(([m,c])=>(
                       <div key={m} style={{ background:"rgba(255,255,255,0.06)", borderRadius:20, padding:"5px 12px", fontSize:12, display:"flex", gap:6, alignItems:"center" }}>
