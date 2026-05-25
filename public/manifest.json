@@ -1,11 +1,11 @@
 {
-  "name": "Courses Familiales",
-  "short_name": "Courses",
-  "description": "Menus et liste de courses adaptés au régime",
+  "name": "Le Frigo",
+  "short_name": "Frigo",
+  "description": "Menus, courses et livraison pour la famille",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#0f0f1a",
-  "theme_color": "#0f0f1a",
+  "background_color": "#180c08",
+  "theme_color": "#180c08",
   "orientation": "portrait",
   "icons": [
     { "src": "/icon.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },

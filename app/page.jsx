@@ -727,11 +727,11 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
       {screen==="home" && (
         <div style={{ padding:"calc(env(safe-area-inset-top, 0px) + 30px) 20px calc(env(safe-area-inset-bottom, 0px) + 20px)", maxWidth:480, margin:"0 auto" }}>
           <div style={{ textAlign:"center", marginBottom:40 }}>
-            <div style={{ fontSize:48, marginBottom:8 }}>🛒</div>
-            <h1 style={{ fontSize:26, fontWeight:"bold", margin:0, background:"linear-gradient(90deg,#3B82F6,#A855F7)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
-              Courses Familiales
+            <div style={{ fontSize:48, marginBottom:8 }}>🍽️</div>
+            <h1 style={{ fontSize:32, fontWeight:"bold", margin:0, background:"linear-gradient(90deg,#FFCD68,#FF9800)", WebkitBackgroundClip:"text", WebkitTextFillColor:"transparent" }}>
+              Le Frigo
             </h1>
-            <p style={{ color:"#888", fontSize:13, marginTop:6 }}>Menus · Régimes · Prix optimisés</p>
+            <p style={{ color:"#888", fontSize:13, marginTop:6 }}>Ce qu'il faut · Pour qui · Où l'acheter</p>
           </div>
           <p style={{ textAlign:"center", color:"#aaa", fontSize:14, marginBottom:24 }}>Choisis ton profil</p>
           {Object.values(PROFILES).map(p => (

@@ -1,10 +1,10 @@
 export const metadata = {
-  title: "Courses Familiales",
-  description: "Menus & courses adaptés",
+  title: "Le Frigo",
+  description: "Menus, courses et livraison pour la famille",
   manifest: "/manifest.json",
   appleWebApp: {
     capable: true,
-    title: "Courses",
+    title: "Frigo",
     statusBarStyle: "black-translucent"
   },
   icons: {
