@@ -171,6 +171,10 @@ export default function App() {
   const [showConcentrateMenu, setShowConcentrateMenu] = useState(false);
   const [switchLidlIdx, setSwitchLidlIdx] = useState(null);
   const [loadingOptimize, setLoadingOptimize] = useState(false);
+  const [comfortMode, setComfortMode] = useState(false);
+  const [favorites, setFavorites] = useState([]);
+  const [history, setHistory] = useState([]);
+  const [showHistory, setShowHistory] = useState(false);
   // tick for relative time refresh
   const [, setTick] = useState(0);
 
@@ -186,7 +190,14 @@ export default function App() {
     });
     setTotals(t);
     setTemplates(loadLS(`${LS_PREFIX}-templates`) || []);
+    setHistory(loadLS(`${LS_PREFIX}-history`) || []);
   }, [screen]);
+
+  // Load comfort mode preference on mount
+  useEffect(() => {
+    const saved = loadLS(`${LS_PREFIX}-comfort`);
+    if (saved !== null) setComfortMode(!!saved);
+  }, []);
 
   // refresh relative dates every minute
   useEffect(() => {
@@ -209,14 +220,23 @@ export default function App() {
     const cachedCourses = loadLS(`${LS_PREFIX}-${p.id}-courses`);
     const menusGen = loadLS(`${LS_PREFIX}-${p.id}-menus-generated`);
     const coursesGen = loadLS(`${LS_PREFIX}-${p.id}-courses-generated`);
+    const cachedFavs = loadLS(`${LS_PREFIX}-${p.id}-favorites`) || [];
 
     setMenus(cachedMenus);
     setCourses(cachedCourses);
     setMenusGeneratedAt(menusGen);
     setCoursesGeneratedAt(coursesGen);
+    setFavorites(cachedFavs);
 
     if (!cachedMenus) genMenus(p);
     if (!cachedCourses) genCourses(p);
+  };
+
+  const buildMenuPromptWithFavs = (prof) => {
+    const favs = loadLS(`${LS_PREFIX}-${prof.id}-favorites`) || [];
+    if (favs.length === 0) return prof.menuPrompt;
+    const favSample = favs.slice(0, 4).map(f => ({ petit_dejeuner: f.petit_dejeuner, dejeuner: f.dejeuner, diner: f.diner }));
+    return `${prof.menuPrompt}\n\nIMPORTANT — Préférences de l'utilisateur : il a apprécié ces ${favSample.length} journées de menus précédemment. Inspire-toi pour proposer des choses dans le même style (mêmes types d'aliments, mêmes ingrédients ou variations proches), tout en restant varié : ${JSON.stringify(favSample)}`;
   };
 
   const genMenus = async (p) => {
@@ -227,7 +247,7 @@ export default function App() {
       if (p.id === "complete") {
         const results = await Promise.all(
           ALL_PROFILES_ARR.map(prof =>
-            callClaude(prof.menuPrompt)
+            callClaude(buildMenuPromptWithFavs(prof))
               .then(d => ({ profile: { id: prof.id, name: prof.name, emoji: prof.emoji, color: prof.color }, jours: d.jours || [] }))
               .catch(() => ({ profile: { id: prof.id, name: prof.name, emoji: prof.emoji, color: prof.color }, jours: [] }))
           )
@@ -235,7 +255,7 @@ export default function App() {
         if (results.every(r => r.jours.length === 0)) throw new Error("empty");
         data = results;
       } else {
-        const d = await callClaude(p.menuPrompt);
+        const d = await callClaude(buildMenuPromptWithFavs(p));
         data = d.jours || [];
       }
       const now = Date.now();
@@ -436,6 +456,93 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
     saveLS(`${LS_PREFIX}-templates`, updated);
   };
 
+  // ====== Mode Confort Canapé ======
+  const toggleComfortMode = () => {
+    const next = !comfortMode;
+    setComfortMode(next);
+    saveLS(`${LS_PREFIX}-comfort`, next);
+  };
+
+  // ====== Menus favoris ======
+  const favKey = (jour) => `${jour.jour}|${(jour.petit_dejeuner || "").slice(0,30)}|${(jour.dejeuner || "").slice(0,30)}`;
+
+  const isFavoriteJour = (jour) => {
+    return favorites.some(f => favKey(f) === favKey(jour));
+  };
+
+  const toggleFavoriteJour = (jour, profileForFav) => {
+    if (!profile) return;
+    const targetProfileId = profileForFav?.id || profile.id;
+    const current = loadLS(`${LS_PREFIX}-${targetProfileId}-favorites`) || [];
+    const exists = current.some(f => favKey(f) === favKey(jour));
+    let updated;
+    if (exists) {
+      updated = current.filter(f => favKey(f) !== favKey(jour));
+    } else {
+      updated = [...current, { ...jour, savedAt: Date.now() }].slice(-12); // cap à 12
+    }
+    saveLS(`${LS_PREFIX}-${targetProfileId}-favorites`, updated);
+    if (targetProfileId === profile.id) setFavorites(updated);
+  };
+
+  // ====== Historique des paniers ======
+  const validateAndArchive = () => {
+    if (!courses || courses.length === 0 || !profile) return;
+    if (!confirm("Valider ces courses ? La liste sera archivée dans l'historique avec sa date et son total.")) return;
+    const entry = {
+      id: `hist-${Date.now()}`,
+      archivedAt: Date.now(),
+      profileId: profile.id,
+      profileName: profile.name,
+      profileColor: profile.color,
+      profileEmoji: profile.emoji,
+      items: courses,
+      total: computeTotal(courses),
+      itemsCount: courses.length
+    };
+    const current = loadLS(`${LS_PREFIX}-history`) || [];
+    const updated = [entry, ...current].slice(0, 100); // cap à 100 entrées
+    saveLS(`${LS_PREFIX}-history`, updated);
+    setHistory(updated);
+    setShareNotice(`✓ Courses validées et archivées (${entry.itemsCount} articles, ${entry.total.toFixed(2)}€)`);
+    setTimeout(() => setShareNotice(null), 3500);
+  };
+
+  const deleteHistoryEntry = (id, e) => {
+    if (e) e.stopPropagation();
+    if (!confirm("Supprimer cette entrée d'historique ?")) return;
+    const updated = history.filter(h => h.id !== id);
+    saveLS(`${LS_PREFIX}-history`, updated);
+    setHistory(updated);
+  };
+
+  const recreateFromHistory = (entry) => {
+    const targetProfile = entry.profileId === "complete" ? COMPLETE_PROFILE : PROFILES[entry.profileId];
+    if (!targetProfile) return;
+    if (!confirm(`Recharger cette liste de ${entry.profileName} comme nouvelle liste de courses ?`)) return;
+    setProfile(targetProfile);
+    setScreen("detail");
+    setTab("courses");
+    setShowHistory(false);
+    setMenus(loadLS(`${LS_PREFIX}-${targetProfile.id}-menus`));
+    setMenusGeneratedAt(loadLS(`${LS_PREFIX}-${targetProfile.id}-menus-generated`));
+    const resetItems = entry.items.map(it => ({ ...it, checked: false }));
+    setCourses(resetItems);
+    setCoursesGeneratedAt(Date.now());
+    saveLS(`${LS_PREFIX}-${targetProfile.id}-courses`, resetItems);
+    saveLS(`${LS_PREFIX}-${targetProfile.id}-courses-generated`, Date.now());
+    setFilterCat("Toutes");
+    setFilterMag("Tous");
+  };
+
+  // Stats historique : moyennes 30j et 90j
+  const monthlyAverage = () => {
+    if (history.length === 0) return 0;
+    const cutoff = Date.now() - 30 * 86400 * 1000;
+    const last30 = history.filter(h => h.archivedAt >= cutoff);
+    return last30.reduce((s, h) => s + h.total, 0);
+  };
+
   const addItem = () => {
     if (!profile || !newItem.produit.trim()) return;
     const item = {
@@ -534,12 +641,18 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
     const checked = !!item.checked;
     const accent = profile?.color || "#888";
     const pours = item.pours && item.pours.length ? item.pours : (item.pour ? [{ name: item.pour, color: item.pourColor }] : []);
+    // Comfort mode adjusts sizes for one-handed couch use
+    const itemPad = comfortMode ? "18px 16px" : "14px 16px";
+    const itemMargin = comfortMode ? 12 : 8;
+    const cbSize = comfortMode ? 28 : 22;
+    const prodFont = comfortMode ? 16 : 14;
+    const metaFont = comfortMode ? 13 : 11;
     return (
       <div
         key={item._idx}
         onClick={()=>toggleItem(item._idx)}
         style={{
-          display:"flex", alignItems:"center", gap:12, padding:"14px 16px", marginBottom:8,
+          display:"flex", alignItems:"center", gap:12, padding:itemPad, marginBottom:itemMargin,
           background: checked ? "rgba(255,255,255,0.015)" : "rgba(255,255,255,0.04)",
           border:`1px solid ${checked ? "rgba(255,255,255,0.04)" : "rgba(255,255,255,0.07)"}`,
           borderRadius:12, cursor:"pointer",
@@ -549,22 +662,22 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
         }}
       >
         <div style={{
-          width:22, height:22, borderRadius:"50%", flexShrink:0,
+          width:cbSize, height:cbSize, borderRadius:"50%", flexShrink:0,
           border:`2px solid ${checked ? accent : "#444"}`,
           background: checked ? accent : "transparent",
           display:"flex", alignItems:"center", justifyContent:"center",
-          color:"#000", fontSize:13, fontWeight:"bold",
+          color:"#000", fontSize:comfortMode?16:13, fontWeight:"bold",
           transition:"background 0.15s, border-color 0.15s"
         }}>
           {checked ? "✓" : ""}
         </div>
         <div style={{ width:8, height:8, borderRadius:"50%", flexShrink:0, background:CAT_COLORS[item.categorie]||"#888" }} />
         <div style={{ flex:1, minWidth:0 }}>
-          <div style={{ fontWeight:"bold", fontSize:14, display:"flex", alignItems:"center", gap:6 }}>
+          <div style={{ fontWeight:"bold", fontSize:prodFont, display:"flex", alignItems:"center", gap:6 }}>
             <span>{item.produit}</span>
             {item.manual && <span style={{ fontSize:9, color:"#888", background:"rgba(255,255,255,0.08)", padding:"1px 6px", borderRadius:8, fontWeight:"normal" }}>ajouté</span>}
           </div>
-          <div style={{ fontSize:11, color:"#666", marginTop:2 }}>
+          <div style={{ fontSize:metaFont, color:"#666", marginTop:2 }}>
             {item.quantite} · {item.categorie}
             {pours.map((p, i) => (
               <span key={i} style={{ color: p.color || "#888", marginLeft:6 }}>· 👤 {p.name}</span>
@@ -676,6 +789,20 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
               ))}
             </div>
           )}
+
+          {history.length > 0 && (
+            <button onClick={() => setShowHistory(true)}
+              style={{ width:"100%", marginTop:24, padding:"16px 20px", background:"rgba(255,255,255,0.03)", border:"1px solid rgba(255,255,255,0.1)", borderRadius:14, cursor:"pointer", textAlign:"left", color:"#f0f0f0", display:"flex", alignItems:"center", gap:14 }}>
+              <span style={{ fontSize:28, flexShrink:0 }}>📊</span>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:14, fontWeight:"bold", color:"#ddd", marginBottom:2 }}>Mon historique</div>
+                <div style={{ fontSize:11, color:"#666" }}>
+                  {history.length} panier{history.length > 1 ? "s" : ""} archivé{history.length > 1 ? "s" : ""} · Total 30j : ~{monthlyAverage().toFixed(2)}€
+                </div>
+              </div>
+              <span style={{ color:"#888", fontSize:18 }}>→</span>
+            </button>
+          )}
         </div>
       )}
 
@@ -689,6 +816,10 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
                 <div style={{ fontWeight:"bold", color:profile.color, fontSize:18 }}>{profile.name}</div>
                 <div style={{ fontSize:11, color:"#666" }}>{profile.regime}</div>
               </div>
+              <button onClick={toggleComfortMode} title={comfortMode ? "Mode standard" : "Mode confort canapé (gros boutons, moins de filtres)"}
+                style={{ ...headerBtn(profile.color), background: comfortMode ? profile.color+"44" : profile.color+"22" }}>
+                {comfortMode ? "🛋️" : "🪑"}
+              </button>
               <button onClick={shareList} title="Partager la liste" style={headerBtn(profile.color)}>📤</button>
               <button onClick={()=>{ genMenus(profile); genCourses(profile); }} title={`Regénérer menus + courses (${isComplete ? COSTS.generateAll : COSTS.generate})`} style={headerBtn(profile.color)}>🔄</button>
             </div>
@@ -722,7 +853,13 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
                       <div style={{ fontSize:12, color:"#666", padding:"10px 0", fontStyle:"italic" }}>Menus indisponibles pour ce profil.</div>
                     ) : jours.map((jour, i) => (
                       <div key={i} style={{ marginBottom:14, background:"rgba(255,255,255,0.04)", border:`1px solid ${prof.color}22`, borderRadius:14, overflow:"hidden" }}>
-                        <div style={{ padding:"10px 16px", background:prof.color+"18", fontWeight:"bold", color:prof.color, fontSize:14 }}>{jour.jour}</div>
+                        <div style={{ padding:"10px 16px", background:prof.color+"18", fontWeight:"bold", color:prof.color, fontSize:14, display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+                          <span>{jour.jour}</span>
+                          <button onClick={() => toggleFavoriteJour(jour, prof)} title={(loadLS(`${LS_PREFIX}-${prof.id}-favorites`) || []).some(f => favKey(f) === favKey(jour)) ? "Retirer des favoris" : "Marquer comme favori"}
+                            style={{ background:"transparent", border:"none", cursor:"pointer", fontSize:18, padding:"0 4px", color: (loadLS(`${LS_PREFIX}-${prof.id}-favorites`) || []).some(f => favKey(f) === favKey(jour)) ? "#FFD700" : "#444", lineHeight:1 }}>
+                            ★
+                          </button>
+                        </div>
                         {["petit_dejeuner","dejeuner","diner"].map(r => (
                           <div key={r} style={{ padding:"10px 16px", borderTop:"1px solid rgba(255,255,255,0.05)", display:"flex", gap:10 }}>
                             <span style={{ fontSize:16, flexShrink:0 }}>{REPAS_ICONS[r]}</span>
@@ -739,7 +876,13 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
               )}
               {!loadingMenus && menus && !isComplete && Array.isArray(menus) && menus.map((jour,i) => (
                 <div key={i} style={{ marginBottom:14, background:"rgba(255,255,255,0.04)", border:`1px solid ${profile.color}22`, borderRadius:14, overflow:"hidden" }}>
-                  <div style={{ padding:"10px 16px", background:profile.color+"18", fontWeight:"bold", color:profile.color, fontSize:14 }}>{jour.jour}</div>
+                  <div style={{ padding:"10px 16px", background:profile.color+"18", fontWeight:"bold", color:profile.color, fontSize:14, display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
+                    <span>{jour.jour}</span>
+                    <button onClick={() => toggleFavoriteJour(jour)} title={isFavoriteJour(jour) ? "Retirer des favoris" : "Marquer comme favori (influence les prochaines générations)"}
+                      style={{ background:"transparent", border:"none", cursor:"pointer", fontSize:18, padding:"0 4px", color:isFavoriteJour(jour) ? "#FFD700" : "#444", lineHeight:1 }}>
+                      ★
+                    </button>
+                  </div>
                   {["petit_dejeuner","dejeuner","diner"].map(r => (
                     <div key={r} style={{ padding:"10px 16px", borderTop:"1px solid rgba(255,255,255,0.05)", display:"flex", gap:10 }}>
                       <span style={{ fontSize:16, flexShrink:0 }}>{REPAS_ICONS[r]}</span>
@@ -873,9 +1016,11 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
                   <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:4, marginBottom:4 }}>
                     {mags.map(m=><button key={m} onClick={()=>setFilterMag(m)} style={pill(filterMag===m,profile.color)}>{m}</button>)}
                   </div>
-                  <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:10 }}>
-                    {cats.map(c=><button key={c} onClick={()=>setFilterCat(c)} style={pill(filterCat===c,"#fff")}>{c}</button>)}
-                  </div>
+                  {!comfortMode && (
+                    <div style={{ display:"flex", gap:8, overflowX:"auto", paddingBottom:10 }}>
+                      {cats.map(c=><button key={c} onClick={()=>setFilterCat(c)} style={pill(filterCat===c,"#fff")}>{c}</button>)}
+                    </div>
+                  )}
 
                   {isComplete && groupedByMag ? (
                     Object.entries(groupedByMag).map(([mag, items]) => {
@@ -937,8 +1082,12 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
                     </div>
                   )}
 
+                  <button onClick={validateAndArchive}
+                    style={{ width:"100%", marginTop:12, padding:"14px", background:profile.color, border:"none", borderRadius:12, color:"#000", fontSize:14, fontWeight:"bold", cursor:"pointer" }}>
+                    ✅ Valider ces courses (archiver)
+                  </button>
                   <button onClick={saveAsTemplate}
-                    style={{ width:"100%", marginTop:10, padding:"10px", background:"transparent", border:`1px solid ${profile.color}33`, borderRadius:10, color:"#888", fontSize:12, cursor:"pointer" }}>
+                    style={{ width:"100%", marginTop:8, padding:"10px", background:"transparent", border:`1px solid ${profile.color}33`, borderRadius:10, color:"#888", fontSize:12, cursor:"pointer" }}>
                     💾 Sauvegarder cette liste comme modèle
                   </button>
                 </>
@@ -980,6 +1129,63 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
                 Annuler
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {showHistory && (
+        <div onClick={() => setShowHistory(false)}
+          style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", zIndex:100, overflowY:"auto", padding:"calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 20px)" }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth:500, margin:"0 auto", background:"#1a1a2e", borderRadius:18, padding:20, border:"1px solid rgba(255,255,255,0.1)" }}>
+            <div style={{ display:"flex", alignItems:"center", marginBottom:18, gap:10 }}>
+              <span style={{ fontSize:24 }}>📊</span>
+              <h2 style={{ margin:0, fontSize:18, color:"#ddd", flex:1 }}>Mon historique</h2>
+              <button onClick={() => setShowHistory(false)} aria-label="Fermer"
+                style={{ background:"transparent", border:"1px solid #333", borderRadius:20, color:"#888", fontSize:16, cursor:"pointer", padding:"4px 12px" }}>
+                ✕
+              </button>
+            </div>
+
+            {history.length > 0 && (
+              <div style={{ marginBottom:18, padding:"12px 14px", background:"rgba(255,255,255,0.04)", border:"1px solid rgba(255,255,255,0.08)", borderRadius:12 }}>
+                <div style={{ fontSize:11, color:"#888", textTransform:"uppercase", letterSpacing:1, marginBottom:8 }}>📈 Stats</div>
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13, marginBottom:4 }}>
+                  <span style={{ color:"#aaa" }}>Total 30 derniers jours</span>
+                  <span style={{ color:"#22C55E", fontWeight:"bold" }}>~{monthlyAverage().toFixed(2)}€</span>
+                </div>
+                <div style={{ display:"flex", justifyContent:"space-between", fontSize:13 }}>
+                  <span style={{ color:"#aaa" }}>Paniers archivés</span>
+                  <span style={{ color:"#ddd", fontWeight:"bold" }}>{history.length}</span>
+                </div>
+              </div>
+            )}
+
+            {history.length === 0 ? (
+              <div style={{ textAlign:"center", padding:"40px 0", color:"#666", fontSize:13 }}>
+                Aucun panier archivé pour l'instant.<br/>
+                Utilise le bouton "✅ Valider ces courses" sur une liste pour l'archiver ici.
+              </div>
+            ) : (
+              history.map(entry => (
+                <button key={entry.id} onClick={() => recreateFromHistory(entry)}
+                  style={{ width:"100%", marginBottom:10, padding:"14px 16px", background:"rgba(255,255,255,0.03)", border:`1px solid ${entry.profileColor}33`, borderLeft:`3px solid ${entry.profileColor}`, borderRadius:12, cursor:"pointer", textAlign:"left", color:"#f0f0f0", display:"flex", alignItems:"center", gap:12 }}>
+                  <span style={{ fontSize:22, flexShrink:0 }}>{entry.profileEmoji}</span>
+                  <div style={{ flex:1, minWidth:0 }}>
+                    <div style={{ fontSize:14, fontWeight:"bold", color:entry.profileColor, marginBottom:2 }}>
+                      {entry.profileName} · {new Date(entry.archivedAt).toLocaleDateString("fr-FR", { day:"2-digit", month:"short" })}
+                    </div>
+                    <div style={{ fontSize:11, color:"#666" }}>
+                      {entry.itemsCount} articles · ~{entry.total.toFixed(2)}€ · {formatRelative(entry.archivedAt)}
+                    </div>
+                  </div>
+                  <button onClick={(e) => deleteHistoryEntry(entry.id, e)} aria-label="Supprimer"
+                    style={{ background:"transparent", border:"none", color:"#555", fontSize:14, cursor:"pointer", padding:"4px 6px", flexShrink:0 }}>
+                    ✕
+                  </button>
+                </button>
+              ))
+            )}
           </div>
         </div>
       )}
