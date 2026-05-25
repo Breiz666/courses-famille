@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#1c1310"/>
+      <stop offset="100%" stop-color="#2a1f1a"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" fill="url(#bg)" rx="96"/>
+  <!-- Frigo corps -->
+  <rect x="130" y="100" width="252" height="320" rx="22" stroke="#FFB347" stroke-width="16" fill="none"/>
+  <!-- Séparation entre 2 portes -->
+  <line x1="130" y1="220" x2="382" y2="220" stroke="#FFB347" stroke-width="10"/>
+  <!-- Poignée porte haute -->
+  <line x1="148" y1="150" x2="148" y2="200" stroke="#FFB347" stroke-width="12" stroke-linecap="round"/>
+  <!-- Poignée porte basse -->
+  <line x1="148" y1="260" x2="148" y2="380" stroke="#FFB347" stroke-width="12" stroke-linecap="round"/>
+  <!-- Checkmark sur porte basse -->
+  <path d="M 215 320 L 250 355 L 320 285" stroke="#FFB347" stroke-width="16" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
