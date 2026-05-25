@@ -5,28 +5,38 @@
       <stop offset="100%" stop-color="#180c08"/>
     </radialGradient>
     <linearGradient id="fridge" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0%" stop-color="#FFCD68"/>
-      <stop offset="100%" stop-color="#FF9800"/>
+      <stop offset="0%" stop-color="#FFD700"/>
+      <stop offset="100%" stop-color="#FF8C00"/>
     </linearGradient>
-    <radialGradient id="glow" cx="0.5" cy="0.5" r="0.5">
-      <stop offset="0%" stop-color="#FF9800" stop-opacity="0.35"/>
-      <stop offset="100%" stop-color="#FF9800" stop-opacity="0"/>
-    </radialGradient>
+    <linearGradient id="fridgeDark" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFA500"/>
+      <stop offset="100%" stop-color="#FF8C00"/>
+    </linearGradient>
   </defs>
-  <!-- Fond -->
   <rect width="512" height="512" fill="url(#bg)" rx="96"/>
-  <!-- Halo derrière le frigo -->
-  <ellipse cx="256" cy="260" rx="200" ry="220" fill="url(#glow)"/>
-  <!-- Corps du frigo -->
-  <rect x="125" y="95" width="262" height="330" rx="26" stroke="url(#fridge)" stroke-width="18" fill="rgba(255,180,0,0.08)"/>
-  <!-- Séparation entre les 2 portes -->
-  <line x1="125" y1="220" x2="387" y2="220" stroke="url(#fridge)" stroke-width="12"/>
-  <!-- Poignée porte haute -->
-  <line x1="148" y1="145" x2="148" y2="200" stroke="url(#fridge)" stroke-width="14" stroke-linecap="round"/>
-  <!-- Poignée porte basse -->
-  <line x1="148" y1="260" x2="148" y2="385" stroke="url(#fridge)" stroke-width="14" stroke-linecap="round"/>
-  <!-- Checkmark vert vif sur porte basse -->
-  <path d="M 210 320 L 250 360 L 325 280" stroke="#4ADE80" stroke-width="22" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
-  <!-- Highlight blanc subtil en haut (effet lumière) -->
-  <line x1="145" y1="115" x2="365" y2="115" stroke="rgba(255,255,255,0.3)" stroke-width="3" stroke-linecap="round"/>
+
+  <!-- Halo derrière -->
+  <ellipse cx="256" cy="260" rx="220" ry="240" fill="#FF8C00" opacity="0.18"/>
+
+  <!-- Corps du frigo : forme pleine (haute lisibilité même en mini) -->
+  <rect x="115" y="75" width="282" height="362" rx="32" fill="url(#fridge)"/>
+
+  <!-- Séparation entre les 2 portes : bande sombre épaisse pour contraster -->
+  <rect x="115" y="210" width="282" height="18" fill="#180c08"/>
+
+  <!-- Poignée porte haute : barre sombre épaisse -->
+  <rect x="138" y="120" width="20" height="72" rx="10" fill="#180c08"/>
+
+  <!-- Poignée porte basse : barre sombre épaisse -->
+  <rect x="138" y="248" width="20" height="146" rx="10" fill="#180c08"/>
+
+  <!-- Reflet/light en haut du frigo (effet 3D subtil) -->
+  <rect x="120" y="80" width="272" height="14" rx="14" fill="rgba(255,255,255,0.35)"/>
+
+  <!-- Gros checkmark vert vif sur porte basse -->
+  <path d="M 196 326 L 246 378 L 348 270" stroke="#22C55E" stroke-width="32" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- Ombre légère sous le check pour le faire ressortir -->
+  <path d="M 200 332 L 250 384 L 352 276" stroke="rgba(0,0,0,0.25)" stroke-width="32" fill="none" stroke-linecap="round" stroke-linejoin="round" opacity="0.4"/>
+  <!-- Le vrai check par-dessus l'ombre -->
+  <path d="M 196 326 L 246 378 L 348 270" stroke="#4ADE80" stroke-width="32" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
 </svg>
