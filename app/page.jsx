@@ -176,6 +176,7 @@ export default function App() {
   const [favMeals, setFavMeals] = useState([]);
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
+  const [recipeModal, setRecipeModal] = useState(null);
   // tick for relative time refresh
   const [, setTick] = useState(0);
 
@@ -527,6 +528,35 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
     }
     saveLS(`${LS_PREFIX}-${targetProfileId}-fav-meals`, updated);
     if (targetProfileId === profile.id) setFavMeals(updated);
+  };
+
+  // ====== Fiche recette (générée par Claude, mise en cache) ======
+  const recipeCacheKey = (text) => (text || "").slice(0, 90).toLowerCase().trim();
+
+  const openRecipe = async (text, label, accent, regime, forceRefresh) => {
+    if (!text) return;
+    const key = recipeCacheKey(text);
+    const cache = loadLS(`${LS_PREFIX}-recipes`) || {};
+    if (cache[key] && !forceRefresh) {
+      setRecipeModal({ text, label, accent, regime, recipe: cache[key], loading: false, error: false });
+      return;
+    }
+    setRecipeModal({ text, label, accent, regime, recipe: null, loading: true, error: false });
+    try {
+      const prompt = `Donne la recette détaillée, réaliste et facile à suivre pour ce plat : "${text}". Régime/contrainte à respecter impérativement : ${regime}. Réponds UNIQUEMENT en JSON valide, sans aucun texte autour, sans markdown : {"titre":"nom du plat","temps_preparation":"X min","temps_cuisson":"X min ou Aucune","portions":"X personnes","ingredients":["quantité + ingrédient","..."],"etapes":["étape 1 claire","étape 2 claire","..."],"astuces":["astuce courte","..."]}. Donne entre 4 et 8 étapes numérotables, chacune concrète et actionnable.`;
+      const d = await callClaude(prompt);
+      const cache2 = loadLS(`${LS_PREFIX}-recipes`) || {};
+      cache2[key] = d;
+      saveLS(`${LS_PREFIX}-recipes`, cache2);
+      setRecipeModal(prev => (prev && prev.text === text) ? { ...prev, recipe: d, loading: false } : prev);
+    } catch {
+      setRecipeModal(prev => (prev && prev.text === text) ? { ...prev, loading: false, error: true } : prev);
+    }
+  };
+
+  const retryRecipe = () => {
+    if (!recipeModal) return;
+    openRecipe(recipeModal.text, recipeModal.label, recipeModal.accent, recipeModal.regime || profile?.regime, true);
   };
 
   // ====== Historique des paniers ======
@@ -906,12 +936,15 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
                         </div>
                         {["petit_dejeuner","dejeuner","diner"].map(r => (
                           <div key={r} style={{ padding:"10px 16px", borderTop:"1px solid rgba(255,255,255,0.05)", display:"flex", gap:10, alignItems:"flex-start" }}>
-                            <span style={{ fontSize:16, flexShrink:0 }}>{REPAS_ICONS[r]}</span>
-                            <div style={{ flex:1, minWidth:0 }}>
-                              <div style={{ fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>{REPAS_LABELS[r]}</div>
-                              <div style={{ fontSize:13, color:"#ddd" }}>{jour[r]}</div>
+                            <div onClick={() => openRecipe(jour[r], REPAS_LABELS[r], prof.color, prof.regime)} style={{ flex:1, minWidth:0, display:"flex", gap:10, cursor:"pointer" }}>
+                              <span style={{ fontSize:16, flexShrink:0 }}>{REPAS_ICONS[r]}</span>
+                              <div style={{ flex:1, minWidth:0 }}>
+                                <div style={{ fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>{REPAS_LABELS[r]}</div>
+                                <div style={{ fontSize:13, color:"#ddd" }}>{jour[r]}</div>
+                                <div style={{ fontSize:10, color:prof.color, marginTop:4, opacity:0.85 }}>📖 Voir la recette →</div>
+                              </div>
                             </div>
-                            <button onClick={() => toggleFavoriteMeal(jour, r, prof)}
+                            <button onClick={(e) => { e.stopPropagation(); toggleFavoriteMeal(jour, r, prof); }}
                               title={isFavoriteMeal(r, jour[r], prof) ? "Retirer ce repas des favoris" : "Marquer ce repas comme favori"}
                               style={{ background:"transparent", border:"none", cursor:"pointer", fontSize:15, padding:"0 2px", color:isFavoriteMeal(r, jour[r], prof) ? "#FFD700" : "#3a3a3a", lineHeight:1, flexShrink:0 }}>
                               ★
@@ -934,12 +967,15 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
                   </div>
                   {["petit_dejeuner","dejeuner","diner"].map(r => (
                     <div key={r} style={{ padding:"10px 16px", borderTop:"1px solid rgba(255,255,255,0.05)", display:"flex", gap:10, alignItems:"flex-start" }}>
-                      <span style={{ fontSize:16, flexShrink:0 }}>{REPAS_ICONS[r]}</span>
-                      <div style={{ flex:1, minWidth:0 }}>
-                        <div style={{ fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>{REPAS_LABELS[r]}</div>
-                        <div style={{ fontSize:13, color:"#ddd" }}>{jour[r]}</div>
+                      <div onClick={() => openRecipe(jour[r], REPAS_LABELS[r], profile.color, profile.regime)} style={{ flex:1, minWidth:0, display:"flex", gap:10, cursor:"pointer" }}>
+                        <span style={{ fontSize:16, flexShrink:0 }}>{REPAS_ICONS[r]}</span>
+                        <div style={{ flex:1, minWidth:0 }}>
+                          <div style={{ fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>{REPAS_LABELS[r]}</div>
+                          <div style={{ fontSize:13, color:"#ddd" }}>{jour[r]}</div>
+                          <div style={{ fontSize:10, color:profile.color, marginTop:4, opacity:0.85 }}>📖 Voir la recette →</div>
+                        </div>
                       </div>
-                      <button onClick={() => toggleFavoriteMeal(jour, r)}
+                      <button onClick={(e) => { e.stopPropagation(); toggleFavoriteMeal(jour, r); }}
                         title={isFavoriteMeal(r, jour[r]) ? "Retirer ce repas des favoris" : "Marquer ce repas comme favori (influence les prochaines générations)"}
                         style={{ background:"transparent", border:"none", cursor:"pointer", fontSize:15, padding:"0 2px", color:isFavoriteMeal(r, jour[r]) ? "#FFD700" : "#3a3a3a", lineHeight:1, flexShrink:0 }}>
                         ★
@@ -1239,6 +1275,102 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
                   </button>
                 </button>
               ))
+            )}
+          </div>
+        </div>
+      )}
+
+      {recipeModal && (
+        <div onClick={() => setRecipeModal(null)}
+          style={{ position:"fixed", inset:0, background:"rgba(0,0,0,0.85)", zIndex:110, overflowY:"auto", padding:"calc(env(safe-area-inset-top, 0px) + 20px) 16px calc(env(safe-area-inset-bottom, 0px) + 20px)" }}>
+          <div onClick={(e) => e.stopPropagation()}
+            style={{ maxWidth:500, margin:"0 auto", background:"#1a1a2e", borderRadius:18, padding:20, border:`1px solid ${recipeModal.accent}44` }}>
+            <div style={{ display:"flex", alignItems:"flex-start", marginBottom:16, gap:10 }}>
+              <div style={{ flex:1, minWidth:0 }}>
+                <div style={{ fontSize:10, color:"#888", textTransform:"uppercase", letterSpacing:1, marginBottom:3 }}>{recipeModal.label}</div>
+                <div style={{ fontSize:16, color:recipeModal.accent, fontWeight:"bold", lineHeight:1.3 }}>
+                  {recipeModal.recipe?.titre || recipeModal.text}
+                </div>
+              </div>
+              <button onClick={() => setRecipeModal(null)} aria-label="Fermer"
+                style={{ background:"transparent", border:"1px solid #333", borderRadius:20, color:"#888", fontSize:16, cursor:"pointer", padding:"4px 12px", flexShrink:0 }}>
+                ✕
+              </button>
+            </div>
+
+            {recipeModal.loading && (
+              <div style={{ textAlign:"center", padding:"40px 0", color:"#888", fontSize:13 }}>
+                👨‍🍳 Préparation de la recette...
+              </div>
+            )}
+
+            {recipeModal.error && (
+              <div style={{ textAlign:"center", padding:"30px 0" }}>
+                <div style={{ color:"#FF5722", fontSize:13, marginBottom:14 }}>Erreur lors de la génération de la recette.</div>
+                <button onClick={retryRecipe}
+                  style={{ padding:"10px 18px", background:recipeModal.accent, border:"none", borderRadius:10, color:"#000", fontSize:13, fontWeight:"bold", cursor:"pointer" }}>
+                  Réessayer
+                </button>
+              </div>
+            )}
+
+            {!recipeModal.loading && !recipeModal.error && recipeModal.recipe && (
+              <>
+                {/* Meta chips */}
+                <div style={{ display:"flex", gap:8, flexWrap:"wrap", marginBottom:18 }}>
+                  {recipeModal.recipe.temps_preparation && (
+                    <div style={{ background:"rgba(255,255,255,0.06)", borderRadius:20, padding:"5px 12px", fontSize:12 }}>⏱️ Prép. {recipeModal.recipe.temps_preparation}</div>
+                  )}
+                  {recipeModal.recipe.temps_cuisson && (
+                    <div style={{ background:"rgba(255,255,255,0.06)", borderRadius:20, padding:"5px 12px", fontSize:12 }}>🔥 Cuisson {recipeModal.recipe.temps_cuisson}</div>
+                  )}
+                  {recipeModal.recipe.portions && (
+                    <div style={{ background:"rgba(255,255,255,0.06)", borderRadius:20, padding:"5px 12px", fontSize:12 }}>🍽️ {recipeModal.recipe.portions}</div>
+                  )}
+                </div>
+
+                {/* Ingrédients */}
+                {Array.isArray(recipeModal.recipe.ingredients) && recipeModal.recipe.ingredients.length > 0 && (
+                  <div style={{ marginBottom:18 }}>
+                    <div style={{ fontSize:13, fontWeight:"bold", color:recipeModal.accent, marginBottom:8 }}>🧾 Ingrédients</div>
+                    {recipeModal.recipe.ingredients.map((ing, i) => (
+                      <div key={i} style={{ fontSize:13, color:"#ddd", padding:"5px 0", borderBottom:i < recipeModal.recipe.ingredients.length-1 ? "1px solid rgba(255,255,255,0.05)" : "none", display:"flex", gap:8 }}>
+                        <span style={{ color:recipeModal.accent }}>•</span>
+                        <span>{ing}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Étapes */}
+                {Array.isArray(recipeModal.recipe.etapes) && recipeModal.recipe.etapes.length > 0 && (
+                  <div style={{ marginBottom:18 }}>
+                    <div style={{ fontSize:13, fontWeight:"bold", color:recipeModal.accent, marginBottom:10 }}>👨‍🍳 Préparation</div>
+                    {recipeModal.recipe.etapes.map((etape, i) => (
+                      <div key={i} style={{ display:"flex", gap:12, marginBottom:12, alignItems:"flex-start" }}>
+                        <div style={{ width:26, height:26, borderRadius:"50%", background:recipeModal.accent, color:"#000", fontSize:13, fontWeight:"bold", display:"flex", alignItems:"center", justifyContent:"center", flexShrink:0 }}>
+                          {i+1}
+                        </div>
+                        <div style={{ fontSize:13, color:"#ddd", lineHeight:1.5, paddingTop:3 }}>{etape}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Astuces */}
+                {Array.isArray(recipeModal.recipe.astuces) && recipeModal.recipe.astuces.length > 0 && (
+                  <div style={{ padding:"12px 14px", background:recipeModal.accent+"12", border:`1px solid ${recipeModal.accent}33`, borderRadius:12 }}>
+                    <div style={{ fontSize:12, fontWeight:"bold", color:recipeModal.accent, marginBottom:6 }}>💡 Astuces</div>
+                    {recipeModal.recipe.astuces.map((a, i) => (
+                      <div key={i} style={{ fontSize:12, color:"#bbb", marginBottom:4, lineHeight:1.4 }}>• {a}</div>
+                    ))}
+                  </div>
+                )}
+
+                <div style={{ fontSize:10, color:"#555", textAlign:"center", marginTop:16 }}>
+                  Recette générée par IA · vérifie les quantités selon ton régime
+                </div>
+              </>
             )}
           </div>
         </div>
