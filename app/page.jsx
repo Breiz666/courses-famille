@@ -173,6 +173,7 @@ export default function App() {
   const [loadingOptimize, setLoadingOptimize] = useState(false);
   const [comfortMode, setComfortMode] = useState(false);
   const [favorites, setFavorites] = useState([]);
+  const [favMeals, setFavMeals] = useState([]);
   const [history, setHistory] = useState([]);
   const [showHistory, setShowHistory] = useState(false);
   // tick for relative time refresh
@@ -221,12 +222,14 @@ export default function App() {
     const menusGen = loadLS(`${LS_PREFIX}-${p.id}-menus-generated`);
     const coursesGen = loadLS(`${LS_PREFIX}-${p.id}-courses-generated`);
     const cachedFavs = loadLS(`${LS_PREFIX}-${p.id}-favorites`) || [];
+    const cachedFavMeals = loadLS(`${LS_PREFIX}-${p.id}-fav-meals`) || [];
 
     setMenus(cachedMenus);
     setCourses(cachedCourses);
     setMenusGeneratedAt(menusGen);
     setCoursesGeneratedAt(coursesGen);
     setFavorites(cachedFavs);
+    setFavMeals(cachedFavMeals);
 
     if (!cachedMenus) genMenus(p);
     if (!cachedCourses) genCourses(p);
@@ -234,9 +237,22 @@ export default function App() {
 
   const buildMenuPromptWithFavs = (prof) => {
     const favs = loadLS(`${LS_PREFIX}-${prof.id}-favorites`) || [];
-    if (favs.length === 0) return prof.menuPrompt;
-    const favSample = favs.slice(0, 4).map(f => ({ petit_dejeuner: f.petit_dejeuner, dejeuner: f.dejeuner, diner: f.diner }));
-    return `${prof.menuPrompt}\n\nIMPORTANT — Préférences de l'utilisateur : il a apprécié ces ${favSample.length} journées de menus précédemment. Inspire-toi pour proposer des choses dans le même style (mêmes types d'aliments, mêmes ingrédients ou variations proches), tout en restant varié : ${JSON.stringify(favSample)}`;
+    const favM = loadLS(`${LS_PREFIX}-${prof.id}-fav-meals`) || [];
+    if (favs.length === 0 && favM.length === 0) return prof.menuPrompt;
+    let addendum = `${prof.menuPrompt}\n\nIMPORTANT — Préférences de l'utilisateur (inspire-toi pour rester dans le même style : mêmes types d'aliments, ingrédients ou variations proches, tout en gardant de la variété) :`;
+    if (favs.length > 0) {
+      const favSample = favs.slice(0, 4).map(f => ({ petit_dejeuner: f.petit_dejeuner, dejeuner: f.dejeuner, diner: f.diner }));
+      addendum += `\n- Journées complètes appréciées : ${JSON.stringify(favSample)}`;
+    }
+    if (favM.length > 0) {
+      const byType = { petit_dejeuner: [], dejeuner: [], diner: [] };
+      favM.forEach(f => { if (byType[f.repas]) byType[f.repas].push(f.text); });
+      const mealFavs = Object.entries(byType)
+        .filter(([, arr]) => arr.length > 0)
+        .map(([repas, arr]) => `${REPAS_LABELS[repas]} : ${JSON.stringify(arr.slice(0, 6))}`);
+      addendum += `\n- Repas individuels appréciés (privilégie ce style de plat pour le repas correspondant) :\n  ${mealFavs.join("\n  ")}`;
+    }
+    return addendum;
   };
 
   const genMenus = async (p) => {
@@ -483,6 +499,34 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
     }
     saveLS(`${LS_PREFIX}-${targetProfileId}-favorites`, updated);
     if (targetProfileId === profile.id) setFavorites(updated);
+  };
+
+  // ====== Favoris par repas (petit-déjeuner / déjeuner / dîner) ======
+  const favMealKey = (repas, text) => `${repas}|${(text || "").slice(0, 50)}`;
+
+  const isFavoriteMeal = (repas, text, profileForFav) => {
+    if (profileForFav && profileForFav.id !== profile?.id) {
+      const list = loadLS(`${LS_PREFIX}-${profileForFav.id}-fav-meals`) || [];
+      return list.some(f => favMealKey(f.repas, f.text) === favMealKey(repas, text));
+    }
+    return favMeals.some(f => favMealKey(f.repas, f.text) === favMealKey(repas, text));
+  };
+
+  const toggleFavoriteMeal = (jour, repas, profileForFav) => {
+    if (!profile) return;
+    const targetProfileId = profileForFav?.id || profile.id;
+    const text = jour[repas];
+    if (!text) return;
+    const current = loadLS(`${LS_PREFIX}-${targetProfileId}-fav-meals`) || [];
+    const exists = current.some(f => favMealKey(f.repas, f.text) === favMealKey(repas, text));
+    let updated;
+    if (exists) {
+      updated = current.filter(f => favMealKey(f.repas, f.text) !== favMealKey(repas, text));
+    } else {
+      updated = [...current, { repas, text, label: REPAS_LABELS[repas], jour: jour.jour, savedAt: Date.now() }].slice(-24); // cap à 24
+    }
+    saveLS(`${LS_PREFIX}-${targetProfileId}-fav-meals`, updated);
+    if (targetProfileId === profile.id) setFavMeals(updated);
   };
 
   // ====== Historique des paniers ======
@@ -861,12 +905,17 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
                           </button>
                         </div>
                         {["petit_dejeuner","dejeuner","diner"].map(r => (
-                          <div key={r} style={{ padding:"10px 16px", borderTop:"1px solid rgba(255,255,255,0.05)", display:"flex", gap:10 }}>
+                          <div key={r} style={{ padding:"10px 16px", borderTop:"1px solid rgba(255,255,255,0.05)", display:"flex", gap:10, alignItems:"flex-start" }}>
                             <span style={{ fontSize:16, flexShrink:0 }}>{REPAS_ICONS[r]}</span>
-                            <div>
+                            <div style={{ flex:1, minWidth:0 }}>
                               <div style={{ fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>{REPAS_LABELS[r]}</div>
                               <div style={{ fontSize:13, color:"#ddd" }}>{jour[r]}</div>
                             </div>
+                            <button onClick={() => toggleFavoriteMeal(jour, r, prof)}
+                              title={isFavoriteMeal(r, jour[r], prof) ? "Retirer ce repas des favoris" : "Marquer ce repas comme favori"}
+                              style={{ background:"transparent", border:"none", cursor:"pointer", fontSize:15, padding:"0 2px", color:isFavoriteMeal(r, jour[r], prof) ? "#FFD700" : "#3a3a3a", lineHeight:1, flexShrink:0 }}>
+                              ★
+                            </button>
                           </div>
                         ))}
                       </div>
@@ -878,18 +927,23 @@ Renvoie UNIQUEMENT un JSON valide sans markdown, format exact : {"liste":[{"prod
                 <div key={i} style={{ marginBottom:14, background:"rgba(255,255,255,0.04)", border:`1px solid ${profile.color}22`, borderRadius:14, overflow:"hidden" }}>
                   <div style={{ padding:"10px 16px", background:profile.color+"18", fontWeight:"bold", color:profile.color, fontSize:14, display:"flex", alignItems:"center", justifyContent:"space-between", gap:8 }}>
                     <span>{jour.jour}</span>
-                    <button onClick={() => toggleFavoriteJour(jour)} title={isFavoriteJour(jour) ? "Retirer des favoris" : "Marquer comme favori (influence les prochaines générations)"}
+                    <button onClick={() => toggleFavoriteJour(jour)} title={isFavoriteJour(jour) ? "Retirer la journée des favoris" : "Marquer toute la journée comme favorite"}
                       style={{ background:"transparent", border:"none", cursor:"pointer", fontSize:18, padding:"0 4px", color:isFavoriteJour(jour) ? "#FFD700" : "#444", lineHeight:1 }}>
                       ★
                     </button>
                   </div>
                   {["petit_dejeuner","dejeuner","diner"].map(r => (
-                    <div key={r} style={{ padding:"10px 16px", borderTop:"1px solid rgba(255,255,255,0.05)", display:"flex", gap:10 }}>
+                    <div key={r} style={{ padding:"10px 16px", borderTop:"1px solid rgba(255,255,255,0.05)", display:"flex", gap:10, alignItems:"flex-start" }}>
                       <span style={{ fontSize:16, flexShrink:0 }}>{REPAS_ICONS[r]}</span>
-                      <div>
+                      <div style={{ flex:1, minWidth:0 }}>
                         <div style={{ fontSize:10, color:"#666", textTransform:"uppercase", letterSpacing:1, marginBottom:2 }}>{REPAS_LABELS[r]}</div>
                         <div style={{ fontSize:13, color:"#ddd" }}>{jour[r]}</div>
                       </div>
+                      <button onClick={() => toggleFavoriteMeal(jour, r)}
+                        title={isFavoriteMeal(r, jour[r]) ? "Retirer ce repas des favoris" : "Marquer ce repas comme favori (influence les prochaines générations)"}
+                        style={{ background:"transparent", border:"none", cursor:"pointer", fontSize:15, padding:"0 2px", color:isFavoriteMeal(r, jour[r]) ? "#FFD700" : "#3a3a3a", lineHeight:1, flexShrink:0 }}>
+                        ★
+                      </button>
                     </div>
                   ))}
                 </div>
